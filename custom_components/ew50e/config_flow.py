@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResult
 
+# Punto A: Definizione locale e fissa del DOMAIN per evitare import circolari
 DOMAIN = "ew50e"
 
 _LOGGER = logging.getLogger(__name__)
