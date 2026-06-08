@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configura EW-50E Mitsubishi",
+        "data": {
+          "host": "Indirizzo IP",
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossibile connettersi al dispositivo",
+      "invalid_auth": "Credenziali non valide",
+      "unknown": "Errore imprevisto"
+    },
+    "abort": {
+      "already_configured": "Dispositivo già configurato"
+    }
+  }
+}
