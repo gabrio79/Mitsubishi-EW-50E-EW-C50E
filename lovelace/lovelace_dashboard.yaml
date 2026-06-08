@@ -1,0 +1,106 @@
+# ============================================================
+# DASHBOARD LOVELACE - EW-50E Monitor
+# Incolla in un nuovo file dashboard o usa UI Editor
+# Richiede: custom:mushroom-cards (HACS) oppure usa le card standard
+# ============================================================
+
+title: "🌡️ Climatizzazione EW-50E"
+views:
+  - title: "Panoramica"
+    icon: mdi:air-conditioner
+    cards:
+
+      # --- STATO SISTEMA ---
+      - type: entities
+        title: "⚙️ Stato Sistema EW-50E"
+        entities:
+          - entity: binary_sensor.ew_50e_anomalia_sistema
+            name: "Anomalia sistema"
+          - entity: sensor.ew_50e_stato_sistema
+            name: "Stato M-NET"
+          - entity: sensor.ew_50e_allarmi_attivi
+            name: "Allarmi attivi"
+          - entity: binary_sensor.ew_50e_perdita_gas_refrigerante
+            name: "Perdita gas refrigerante"
+          - entity: sensor.ew_50e_temperatura_esterna
+            name: "Temperatura esterna"
+
+      # --- ALLARMI ATTIVI (condizionale) ---
+      - type: conditional
+        conditions:
+          - entity: binary_sensor.ew_50e_anomalia_sistema
+            state: "on"
+        card:
+          type: markdown
+          title: "🚨 ANOMALIE ATTIVE"
+          content: >
+            {% set alarms = state_attr('sensor.ew_50e_allarmi_attivi', 'allarme_1') %}
+            **Allarmi rilevati:** {{ states('sensor.ew_50e_allarmi_attivi') }}
+
+            Controlla il pannello EW-50E per i dettagli.
+
+      # --- FARMACIA ---
+      - type: entities
+        title: "💊 Farmacia"
+        entities:
+          - entity: sensor.farmacia_magazzino_temperatura
+            name: "Magazzino - Temp"
+          - entity: binary_sensor.farmacia_magazzino_anomalia
+            name: "Magazzino - Anomalia"
+          - entity: sensor.farmacia_bancone_temperatura
+            name: "Bancone - Temp"
+          - entity: binary_sensor.farmacia_bancone_anomalia
+            name: "Bancone - Anomalia"
+          - entity: sensor.farmacia_autoanalisi_temperatura
+            name: "Autoanalisi - Temp"
+          - entity: binary_sensor.farmacia_autoanalisi_anomalia
+            name: "Autoanalisi - Anomalia"
+          - entity: sensor.farmacia_galenico_temperatura
+            name: "Galenico - Temp"
+          - entity: binary_sensor.farmacia_galenico_anomalia
+            name: "Galenico - Anomalia"
+
+      # --- STUDI MEDICI ---
+      - type: entities
+        title: "🏥 Studi Medici"
+        entities:
+          - entity: sensor.studio_1_roggero_temperatura
+            name: "Studio 1 (Roggero)"
+          - entity: binary_sensor.studio_1_roggero_anomalia
+            name: "Studio 1 - Anomalia"
+          - entity: sensor.studio_2_savernini_temperatura
+            name: "Studio 2 (Savernini)"
+          - entity: binary_sensor.studio_2_savernini_anomalia
+            name: "Studio 2 - Anomalia"
+          - entity: sensor.studio_3_temperatura
+            name: "Studio 3"
+          - entity: binary_sensor.studio_3_anomalia
+            name: "Studio 3 - Anomalia"
+          - entity: sensor.studio_4_fisio_temperatura
+            name: "Studio 4 (Fisio)"
+          - entity: binary_sensor.studio_4_fisio_anomalia
+            name: "Studio 4 - Anomalia"
+          - entity: sensor.studi_sala_aspetto_temperatura
+            name: "Sala Aspetto"
+          - entity: binary_sensor.studi_sala_aspetto_anomalia
+            name: "Sala Aspetto - Anomalia"
+
+      # --- APPARTAMENTI ---
+      - type: entities
+        title: "🏠 Casa / Bilocale"
+        entities:
+          - entity: sensor.casa_soggiorno_temperatura
+            name: "Casa - Soggiorno"
+          - entity: sensor.casa_camera_greta_temperatura
+            name: "Casa - Camera Greta"
+          - entity: sensor.casa_camera_matrimoniale_temperatura
+            name: "Casa - Camera Matrimoniale"
+          - entity: sensor.bilocale_soggiorno_temperatura
+            name: "Bilocale - Soggiorno"
+
+      # --- GRAFICO TEMPERATURA ESTERNA ---
+      - type: history-graph
+        title: "📈 Temperatura esterna (24h)"
+        hours_to_show: 24
+        entities:
+          - entity: sensor.ew_50e_temperatura_esterna
