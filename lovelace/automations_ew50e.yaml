@@ -1,0 +1,144 @@
+# ============================================================
+# AUTOMAZIONI EW-50E - Notifiche anomalie Mitsubishi Electric
+# Incolla in configuration.yaml o nel file automations.yaml
+# ============================================================
+
+automation:
+
+  # ----------------------------------------------------------
+  # 1. ANOMALIA SISTEMA: notifica quando scatta un allarme
+  # ----------------------------------------------------------
+  - alias: "EW-50E: Notifica anomalia sistema"
+    id: ew50e_system_alarm_on
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ew_50e_anomalia_sistema
+        to: "on"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "⚠️ ANOMALIA Climatizzazione"
+          message: >
+            Rilevata anomalia sul sistema EW-50E.
+            Allarmi attivi: {{ states('sensor.ew_50e_allarmi_attivi') }}
+            Stato sistema: {{ states('sensor.ew_50e_stato_sistema') }}
+            Codice errore: {{ state_attr('binary_sensor.ew_50e_anomalia_sistema', 'codice_errore_sistema') }}
+    mode: single
+
+  # ----------------------------------------------------------
+  # 2. ANOMALIA SISTEMA: notifica quando si risolve
+  # ----------------------------------------------------------
+  - alias: "EW-50E: Notifica ripristino sistema"
+    id: ew50e_system_alarm_off
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ew_50e_anomalia_sistema
+        to: "off"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "✅ Climatizzazione ripristinata"
+          message: "Il sistema EW-50E non ha più anomalie attive."
+    mode: single
+
+  # ----------------------------------------------------------
+  # 3. PERDITA GAS: massima priorità
+  # ----------------------------------------------------------
+  - alias: "EW-50E: ALLARME perdita gas refrigerante"
+    id: ew50e_ref_leak
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ew_50e_perdita_gas_refrigerante
+        to: "on"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "🚨 PERDITA GAS REFRIGERANTE"
+          message: >
+            ATTENZIONE: Il sistema EW-50E ha rilevato una possibile
+            perdita di gas refrigerante. Contattare immediatamente
+            il tecnico di manutenzione.
+      # Opzionale: invia anche una notifica persistente in HA
+      - service: persistent_notification.create
+        data:
+          title: "PERDITA GAS REFRIGERANTE"
+          message: "EW-50E ha rilevato una perdita. Intervento tecnico richiesto."
+          notification_id: ew50e_gas_leak
+    mode: single
+
+  # ----------------------------------------------------------
+  # 4. ANOMALIA PER ZONA: notifica con nome zona
+  #    (Esempio per le zone più critiche - replicare per altre)
+  # ----------------------------------------------------------
+  - alias: "EW-50E: Anomalia zona Farmacia"
+    id: ew50e_zone_alarm_farmacia
+    trigger:
+      - platform: state
+        entity_id:
+          - binary_sensor.farmacia_magazzino_anomalia
+          - binary_sensor.farmacia_cassetteria_anomalia
+          - binary_sensor.farmacia_autoanalisi_anomalia
+          - binary_sensor.farmacia_galenico_anomalia
+          - binary_sensor.farmacia_bancone_anomalia
+          - binary_sensor.farmacia_isola_centrale_anomalia
+          - binary_sensor.farmacia_porta_automatica_anomalia
+          - binary_sensor.farmacia_mammabambino_anomalia
+        to: "on"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "⚠️ Anomalia Farmacia - Climatizzazione"
+          message: >
+            Zona in anomalia: {{ trigger.to_state.name }}
+            Codice errore: {{ state_attr(trigger.entity_id, 'codice_errore') }}
+            Ore: {{ now().strftime('%H:%M') }}
+    mode: parallel
+    max: 10
+
+  - alias: "EW-50E: Anomalia zona Studi Medici"
+    id: ew50e_zone_alarm_studi
+    trigger:
+      - platform: state
+        entity_id:
+          - binary_sensor.studio_1_roggero_anomalia
+          - binary_sensor.studio_3_anomalia
+          - binary_sensor.studio_2_savernini_anomalia
+          - binary_sensor.studio_4_fisio_anomalia
+          - binary_sensor.studi_sala_aspetto_anomalia
+        to: "on"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "⚠️ Anomalia Studi Medici - Climatizzazione"
+          message: >
+            Zona in anomalia: {{ trigger.to_state.name }}
+            Codice errore: {{ state_attr(trigger.entity_id, 'codice_errore') }}
+    mode: parallel
+    max: 10
+
+  # ----------------------------------------------------------
+  # 5. REPORT MATTUTINO: riepilogo stato ogni mattina
+  # ----------------------------------------------------------
+  - alias: "EW-50E: Report mattutino stato impianto"
+    id: ew50e_morning_report
+    trigger:
+      - platform: time
+        at: "08:00:00"
+    condition: []
+    action:
+      - service: notify.notify
+        data:
+          title: "📊 EW-50E - Report mattutino"
+          message: >
+            Stato impianto climatizzazione:
+            • Sistema: {{ states('sensor.ew_50e_stato_sistema') }}
+            • Allarmi attivi: {{ states('sensor.ew_50e_allarmi_attivi') }}
+            • Temp. esterna: {{ states('sensor.ew_50e_temperatura_esterna') }}°C
+            • Farmacia Bancone: {{ states('sensor.farmacia_bancone_temperatura') }}°C
+            • Studio 1 Roggero: {{ states('sensor.studio_1_roggero_temperatura') }}°C
+    mode: single
