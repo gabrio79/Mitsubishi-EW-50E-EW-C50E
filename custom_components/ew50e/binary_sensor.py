@@ -39,7 +39,7 @@ async def async_setup_entry(
 def _device_info(entry: ConfigEntry) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=entry.title,
+        name="EW-50E",
         manufacturer="Mitsubishi Electric",
         model="EW-50E / EW-C50E",
     )
@@ -51,9 +51,10 @@ class EW50ESystemAlarmBinarySensor(CoordinatorEntity[EW50ECoordinator], BinarySe
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_system_alarm"
-        self._attr_name = "EW-50E Anomalia Sistema"
+        self._attr_name = "Anomalia Sistema"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def is_on(self) -> bool:
@@ -66,13 +67,13 @@ class EW50ERefLeakBinarySensor(CoordinatorEntity[EW50ECoordinator], BinarySensor
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_ref_leak"
-        self._attr_name = "EW-50E Perdita Gas Refrigerante"
+        self._attr_name = "Perdita Gas Refrigerante"
         self._attr_device_class = BinarySensorDeviceClass.SAFETY
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def is_on(self) -> bool:
-        # Se presente un allarme specifico di tipo perdita gas nell'array degli allarmi
         alarms = self.coordinator.data.get("alarms", [])
         return any(a.get("type") == "leak" for a in alarms)
 
@@ -84,10 +85,11 @@ class EW50EGroupAlarmBinarySensor(CoordinatorEntity[EW50ECoordinator], BinarySen
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
-        self._attr_unique_id = f"ew50e_group_{group_id}_alarm"
-        self._attr_name = f"{group_name} - Anomalia"
+        self._attr_unique_id = f"{entry.entry_id}_group_{group_id}_alarm"
+        self._attr_name = f"{group_name} Anomalia"
         self._attr_device_class = BinarySensorDeviceClass.PROBLEM
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def is_on(self) -> bool:
