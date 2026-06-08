@@ -44,7 +44,7 @@ async def async_setup_entry(
 def _device_info(entry: ConfigEntry) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=entry.title,
+        name="EW-50E",
         manufacturer="Mitsubishi Electric",
         model="EW-50E / EW-C50E",
     )
@@ -56,11 +56,12 @@ class EW50EOutdoorTempSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_outdoor_temp"
-        self._attr_name = "EW-50E Temperatura Esterna"
+        self._attr_name = "Temperatura Esterna"
         self._attr_device_class = SensorDeviceClass.TEMPERATURE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def native_value(self) -> float | None:
@@ -73,8 +74,9 @@ class EW50ESystemAlarmSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_system_status"
-        self._attr_name = "EW-50E Stato Sistema"
+        self._attr_name = "Stato Sistema"
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def native_value(self) -> str:
@@ -87,9 +89,10 @@ class EW50EAlarmCountSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_alarm_count"
-        self._attr_name = "EW-50E Allarmi Attivi"
+        self._attr_name = "Allarmi Attivi"
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def native_value(self) -> int:
@@ -103,12 +106,13 @@ class EW50EGroupInletTempSensor(CoordinatorEntity[EW50ECoordinator], SensorEntit
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
-        self._attr_unique_id = f"ew50e_group_{group_id}_temp"
+        self._attr_unique_id = f"{entry.entry_id}_group_{group_id}_temp"
         self._attr_name = f"{group_name} Temperatura"
         self._attr_device_class = SensorDeviceClass.TEMPERATURE
         self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def native_value(self) -> float | None:
@@ -123,9 +127,10 @@ class EW50EGroupStatusSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
-        self._attr_unique_id = f"ew50e_group_{group_id}_status"
+        self._attr_unique_id = f"{entry.entry_id}_group_{group_id}_status"
         self._attr_name = f"{group_name} Stato Operativo"
         self._attr_device_info = _device_info(entry)
+        self._attr_has_entity_name = True
 
     @property
     def native_value(self) -> str:
