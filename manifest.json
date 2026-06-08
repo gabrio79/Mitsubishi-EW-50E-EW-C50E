@@ -1,0 +1,11 @@
+{
+  "domain": "ew50e",
+  "name": "Mitsubishi EW-50E / EW-C50E",
+  "version": "1.0.0",
+  "documentation": "https://github.com/your-repo/ha-ew50e",
+  "requirements": ["aiohttp>=3.8.0"],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "local_push",
+  "config_flow": true
+}
