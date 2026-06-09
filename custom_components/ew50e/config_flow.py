@@ -11,7 +11,6 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResult
 
-# Punto A: Definizione locale e fissa del DOMAIN per evitare import circolari
 DOMAIN = "ew50e"
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ class EW50EConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 from . import EW50EClient
-                
+
                 client = EW50EClient(
                     user_input[CONF_HOST],
                     user_input[CONF_USERNAME],
@@ -46,12 +45,14 @@ class EW50EConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 await client.login()
                 await client.disconnect()
-            except ValueError:
+            except ValueError as err:
+                _LOGGER.error("EW-50E login ValueError: %s", err)
                 errors["base"] = "invalid_auth"
-            except aiohttp.ClientConnectorError:
+            except aiohttp.ClientConnectorError as err:
+                _LOGGER.error("EW-50E connessione fallita: %s", err)
                 errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Errore imprevisto durante il login")
+            except Exception as err:
+                _LOGGER.exception("Errore imprevisto durante il login: %s", err)
                 errors["base"] = "unknown"
             else:
                 await self.async_set_unique_id(user_input[CONF_HOST])
