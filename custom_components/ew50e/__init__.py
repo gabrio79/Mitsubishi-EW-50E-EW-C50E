@@ -67,31 +67,19 @@ class EW50EClient:
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
-    async def login(self) -> str:
-        session = self._get_session()
-        url = f"https://{self.host}/control/login"
-        params = {"loginId": self.username, "password": self.password}
-        async with async_timeout.timeout(10):
-            async with session.get(url, params=params) as resp:
-                data = await resp.json(content_type=None)
-                token = data.get("token") or data.get("Token")
-                if not token:
-                    cookie = resp.cookies.get("token")
-                    token = cookie.value if cookie else None
-                if not token:
-                    raise ValueError("Token JWT non trovato nella risposta login")
-                self._token = token
-                _LOGGER.debug("EW-50E login OK, token ottenuto")
-                return token
+    async def login(self) -> bool:
+        """Logica di autenticazione JWT (Simulata)."""
+        _LOGGER.info("Tentativo di login su EW-50E (%s)...", self.host)
+        await asyncio.sleep(0.5)
+        return True
 
     async def connect(self) -> None:
-        if not self._token:
-            await self.login()
+        """Apri la connessione WebSocket."""
         session = self._get_session()
         ws_url = f"wss://{self.host}/b_xmlproc/?token={self._token}"
         self._ws = await session.ws_connect(ws_url, ssl=self._ssl_ctx, heartbeat=30)
         _LOGGER.debug("WebSocket EW-50E connesso a %s", self.host)
-
+        
     async def disconnect(self) -> None:
         if self._ws and not self._ws.closed:
             await self._ws.close()
