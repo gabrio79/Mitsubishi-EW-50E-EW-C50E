@@ -1,9 +1,8 @@
 {
   "domain": "ew50e",
   "name": "Mitsubishi EW-50E / EW-C50E",
-  "version": "1.6",
+  "version": "1.7",
   "documentation": "https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E",
-  "download_url": "https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E/releases",
   "requirements": ["aiohttp>=3.8.0"],
   "dependencies": [],
   "codeowners": ["@gabrio79"],
