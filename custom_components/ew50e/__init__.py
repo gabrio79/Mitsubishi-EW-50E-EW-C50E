@@ -67,18 +67,46 @@ class EW50EClient:
             self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
-    async def login(self) -> bool:
-        """Logica di autenticazione JWT (Simulata)."""
-        _LOGGER.info("Tentativo di login su EW-50E (%s)...", self.host)
-        await asyncio.sleep(0.5)
-        return True
+async def login(self) -> bool:
+    """
+    Autentica la sessione HTTP contro l'EW-50E.
+    Il token JWT viene salvato automaticamente nei cookie di sessione.
+    """
+    _LOGGER.info("Tentativo di login su EW-50E (%s)...", self.host)
+    session = self._get_session()
+    url = f"https://{self.host}/control/login"
+    params = {"loginId": self.username, "password": self.password}
+    async with async_timeout.timeout(10):
+        async with session.get(url, params=params, allow_redirects=True) as resp:
+            _LOGGER.debug("Login status: %s", resp.status)
+            # Il token può essere nel cookie o nell'URL finale
+            for name in ["token", "Token", "SESSION"]:
+                cookie = resp.cookies.get(name) or session.cookie_jar._cookies.get(name)
+                if cookie:
+                    self._token = cookie if isinstance(cookie, str) else cookie.value
+                    _LOGGER.debug("Token trovato nel cookie '%s'", name)
+                    return True
+            # Prova a leggere il token dall'URL finale dopo redirect
+            final_url = str(resp.url)
+            if "token=" in final_url:
+                self._token = final_url.split("token=")[-1].split("&")[0]
+                _LOGGER.debug("Token trovato in URL: %s", self._token[:20])
+                return True
+    _LOGGER.warning("Token non trovato, procedo senza — il WS potrebbe fallire")
+    return True  # Non bloccare: il WS gestisce l'auth autonomamente
 
-    async def connect(self) -> None:
-        """Apri la connessione WebSocket."""
-        session = self._get_session()
+async def connect(self) -> None:
+    """Apri la connessione WebSocket."""
+    if not self._token:
+        await self.login()
+    session = self._get_session()
+    # Se abbiamo il token lo passiamo, altrimenti proviamo senza
+    if self._token:
         ws_url = f"wss://{self.host}/b_xmlproc/?token={self._token}"
-        self._ws = await session.ws_connect(ws_url, ssl=self._ssl_ctx, heartbeat=30)
-        _LOGGER.debug("WebSocket EW-50E connesso a %s", self.host)
+    else:
+        ws_url = f"wss://{self.host}/b_xmlproc/"
+    self._ws = await session.ws_connect(ws_url, ssl=self._ssl_ctx, heartbeat=30)
+    _LOGGER.debug("WebSocket EW-50E connesso a %s", self.host)
         
     async def disconnect(self) -> None:
         if self._ws and not self._ws.closed:
