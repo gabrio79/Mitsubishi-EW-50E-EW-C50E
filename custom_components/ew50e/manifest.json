@@ -8,5 +8,5 @@
   "codeowners": ["@gabrio79"],
   "iot_class": "local_push",
   "config_flow": true,
-  "version": "1.10"
+  "version": "1.11"
 }
