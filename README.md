@@ -1,36 +1,45 @@
 # Mitsubishi Electric EW-50E / EW-C50E - Home Assistant Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/default)
-![Project Version](https://img.shields.io/badge/version-1.0.1-blue.svg?style=for-the-badge)
-![Home Assistant](https://img.shields.io/badge/Home__Assistant-Custom__Component-green.svg?style=for-the-badge)
+[![Project Version](https://img.shields.io/badge/version-1.0.2-blue.svg?style=for-the-badge)](https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E)
+[![Home Assistant](https://img.shields.io/badge/Home_Assistant-Custom_Component-green.svg?style=for-the-badge)](https://www.home-assistant.io)
 
 Integrazione custom nativa per **Mitsubishi Electric EW-50E / EW-C50E** (compatibile anche con i sistemi della famiglia AE-200E). Permette il monitoraggio centralizzato dello stato, delle temperature e delle anomalie di tutte le zone tramite Home Assistant.
 
+---
+
 ## 🚀 Caratteristiche
 
-- **Protocollo**: Comunicazione in tempo reale tramite **WebSocket WSS** (porta 443) con parsing XML nativo.
-- **Autenticazione**: Gestione sicura del token JWT tramite login HTTP iniziale.
-- **Aggiornamento**: Sincronizzazione automatica tramite `DataUpdateCoordinator` ogni 30 secondi.
-- **Configurazione**: Interamente configurabile tramite interfaccia utente (UI Config Flow).
-- **Integrità**: Gestione degli errori di connessione e avvisi in caso di anomalie di rete o di blocco del sistema M-NET.
+- **Protocollo nativo**: Comunicazione in tempo reale tramite **WebSocket WSS** (porta 443) con parsing XML proprietario Mitsubishi
+- **Auto-discovery gruppi**: I nomi delle zone vengono scaricati **automaticamente dall'EW-50E** al primo avvio — nessuna configurazione manuale
+- **Autenticazione JWT**: Gestione sicura del token tramite login HTTP iniziale, poi passato al WebSocket
+- **Aggiornamento automatico**: Sincronizzazione ogni 30 secondi tramite `DataUpdateCoordinator`
+- **Configurazione UI**: Interamente configurabile tramite interfaccia grafica (Config Flow)
+- **Resilienza**: Riconnessione automatica al WebSocket in caso di disconnessione
+
+---
+
+## 📊 Entità create
+
+### Sensori globali
+| Entità | Descrizione |
+|--------|-------------|
+| `sensor.ew_50e_temperatura_esterna` | Temperatura outdoor (°C) |
+| `sensor.ew_50e_stato_sistema` | Stato M-NET (`NORMALE` / `ALLARME`) |
+| `sensor.ew_50e_allarmi_attivi` | Numero allarmi attivi con dettaglio |
+| `binary_sensor.ew_50e_anomalia_sistema` | `ON` se almeno un allarme è attivo |
+| `binary_sensor.ew_50e_perdita_gas_refrigerante` | Allarme perdita gas refrigerante |
+
+### Per ogni zona (auto-scoperta)
+I sensori seguenti vengono creati automaticamente per **ogni gruppo configurato nell'EW-50E**, usando i nomi esatti impostati nel centralino:
+
+| Entità | Descrizione |
+|--------|-------------|
+| `sensor.<nome_zona>_temperatura` | Temperatura ambiente rilevata (InletTemp) |
+| `sensor.<nome_zona>_setpoint` | Temperatura impostata |
+| `sensor.<nome_zona>_stato` | Stato operativo (`ON - COOL`, `OFF`, `ERRORE`) |
+| `binary_sensor.<nome_zona>_anomalia` | `ON` se la zona è in errore |
 
 ---
 
 ## 📂 Struttura del Repository
-
-Per garantire la conformità con i requisiti di validazione di HACS, il repository è strutturato come segue:
-
-```text
-Mitsubishi-EW-50E-EW-C50E/
-├── custom_components/
-│   └── ew50e/
-│       ├── __init__.py          # Client WebSocket + DataUpdateCoordinator (17 zone)
-│       ├── binary_sensor.py     # Sensori diagnostici, anomalie e perdite gas
-│       ├── config_flow.py       # Interfaccia di configurazione guidata (UI)
-│       ├── icon.png             # Icona quadrata del componente per la UI di HACS
-│       ├── logo.png             # Logo orizzontale per la documentazione HACS
-│       ├── manifest.json        # Metadati dell'integrazione e dipendenze
-│       ├── sensor.py            # Sensori di temperatura (Inlet) e stato operativo
-│       └── strings.json         # Traduzioni dei testi di configurazione
-├── hacs.json                    # Configurazione metadati per HACS Store
-└── README.md                    # Questa documentazione
