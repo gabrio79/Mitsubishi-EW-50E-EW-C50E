@@ -26,16 +26,16 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Setup sensori EW-50E."""
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[SensorEntity] = []
 
+    entities: list[SensorEntity] = []
     entities.append(EW50EOutdoorTempSensor(coordinator, entry))
     entities.append(EW50ESystemAlarmSensor(coordinator, entry))
     entities.append(EW50EAlarmCountSensor(coordinator, entry))
 
     for group_id, group_name in coordinator.group_names.items():
         entities.append(EW50EGroupInletTempSensor(coordinator, entry, group_id, group_name))
+        entities.append(EW50EGroupSetTempSensor(coordinator, entry, group_id, group_name))
         entities.append(EW50EGroupStatusSensor(coordinator, entry, group_id, group_name))
 
     async_add_entities(entities)
@@ -43,116 +43,195 @@ async def async_setup_entry(
 
 def _device_info(entry: ConfigEntry) -> DeviceInfo:
     return DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name="EW-50E",
+        identifiers={(DOMAIN, entry.data["host"])},
+        name="EW-50E Mitsubishi",
         manufacturer="Mitsubishi Electric",
-        model="EW-50E / EW-C50E",
+        model="EW-C50E",
+        configuration_url=f"https://{entry.data['host']}/control/",
     )
 
 
-class EW50EOutdoorTempSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
-    """Sensore temperatura esterna."""
-
+class _Base(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_outdoor_temp"
-        self._attr_name = "Temperatura Esterna"
-        self._attr_device_class = SensorDeviceClass.TEMPERATURE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+        super().__init__(coordinator)
+        self._entry = entry
         self._attr_device_info = _device_info(entry)
-        self._attr_has_entity_name = True
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+class EW50EOutdoorTempSensor(_Base):
+    _attr_name = "EW-50E Temperatura Esterna"
+    _attr_unique_id = "ew50e_outdoor_temp"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer"
 
     @property
     def native_value(self) -> float | None:
-        return self.coordinator.data.get("system", {}).get("outdoor_temp")
+        return self.coordinator.data.get("outdoor_temp")
 
 
-class EW50ESystemAlarmSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
-    """Sensore stato sistema M-NET."""
-
-    def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_system_status"
-        self._attr_name = "Stato Sistema"
-        self._attr_device_info = _device_info(entry)
-        self._attr_has_entity_name = True
+class EW50ESystemAlarmSensor(_Base):
+    _attr_name = "EW-50E Stato Sistema"
+    _attr_unique_id = "ew50e_system_alarm"
 
     @property
     def native_value(self) -> str:
-        return self.coordinator.data.get("system", {}).get("status", "N/D")
-
-
-class EW50EAlarmCountSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
-    """Contatore allarmi attivi."""
-
-    def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_alarm_count"
-        self._attr_name = "Allarmi Attivi"
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_device_info = _device_info(entry)
-        self._attr_has_entity_name = True
-
-    @property
-    def native_value(self) -> int:
-        return self.coordinator.data.get("system", {}).get("alarm_count", 0)
-
-
-class EW50EGroupInletTempSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
-    """Sensore temperatura di ritorno (Inlet) del gruppo."""
-
-    def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry, group_id: str, group_name: str) -> None:
-        super().__init__(coordinator, entry)
-        self._group_id = group_id
-        self._group_name = group_name
-        self._attr_unique_id = f"{entry.entry_id}_group_{group_id}_temp"
-        self._attr_name = f"{group_name} Temperatura"
-        self._attr_device_class = SensorDeviceClass.TEMPERATURE
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        self._attr_device_info = _device_info(entry)
-        self._attr_has_entity_name = True
-
-    @property
-    def native_value(self) -> float | None:
-        groups = self.coordinator.data.get("groups", {})
-        return groups.get(self._group_id, {}).get("temp")
-
-
-class EW50EGroupStatusSensor(CoordinatorEntity[EW50ECoordinator], SensorEntity):
-    """Sensore stato operativo del gruppo (Stato e Modalità)."""
-
-    def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry, group_id: str, group_name: str) -> None:
-        super().__init__(coordinator, entry)
-        self._group_id = group_id
-        self._group_name = group_name
-        self._attr_unique_id = f"{entry.entry_id}_group_{group_id}_status"
-        self._attr_name = f"{group_name} Stato Operativo"
-        self._attr_device_info = _device_info(entry)
-        self._attr_has_entity_name = True
-
-    @property
-    def native_value(self) -> str:
-        groups = self.coordinator.data.get("groups", {})
-        group = groups.get(self._group_id, {})
-        if group.get("errorsign") == "ON":
-            return "ERRORE"
-        if group.get("drive") == "ON":
-            mode = group.get("mode", "")
-            return f"ON - {mode}" if mode else "ON"
-        return "OFF"
+        alarm = self.coordinator.data.get("system_alarm", {})
+        if alarm.get("alert") == "ON":
+            return "ALLARME"
+        mnet = self.coordinator.data.get("mnet_status", "UNKNOWN")
+        return "NORMALE" if mnet == "NORMAL" else mnet
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        groups = self.coordinator.data.get("groups", {})
-        group = groups.get(self._group_id, {})
+        alarm = self.coordinator.data.get("system_alarm", {})
         return {
-            "gruppo": self._group_id,
-            "nome": self._group_name,
-            "drive": group.get("drive", ""),
-            "modalita": group.get("mode", ""),
-            "velocita_fan": group.get("fanspeed", ""),
-            "direzione_aria": group.get("airdirection", ""),
-            "codice_errore": group.get("errorcode", ""),
+            "alert": alarm.get("alert", "OFF"),
+            "livello_alert": alarm.get("alert_level", "0"),
+            "indirizzo_trigger": alarm.get("alert_address", "0"),
+            "codice_errore": alarm.get("error_code", "0000"),
+            "buzzer_lampeggio": alarm.get("buzzer_lamp", "OFF"),
+            "allarme_perdita_gas": alarm.get("ref_leak_alarm", "OFF"),
+            "stato_mnet": self.coordinator.data.get("mnet_status", "UNKNOWN"),
         }
+
+    @property
+    def icon(self) -> str:
+        alarm = self.coordinator.data.get("system_alarm", {})
+        return "mdi:shield-alert" if alarm.get("alert") == "ON" else "mdi:shield-check"
+
+
+class EW50EAlarmCountSensor(_Base):
+    _attr_name = "EW-50E Allarmi Attivi"
+    _attr_unique_id = "ew50e_alarm_count"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.get("alarms", []))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        alarms = self.coordinator.data.get("alarms", [])
+        result: dict[str, Any] = {}
+        for i, alarm in enumerate(alarms):
+            gid = str(alarm.get("group", ""))
+            name = self.coordinator.group_names.get(gid, f"Gruppo {gid}" if gid else "Sistema")
+            result[f"allarme_{i + 1}"] = {
+                "gruppo": gid,
+                "nome": name,
+                "indirizzo": alarm.get("address", ""),
+                "codice_errore": alarm.get("error_code", ""),
+                "livello": alarm.get("error_level", ""),
+                "tipo": alarm.get("error_type", ""),
+            }
+        return result
+
+    @property
+    def icon(self) -> str:
+        return "mdi:alert-circle" if (self.native_value or 0) > 0 else "mdi:check-circle"
+
+
+class _GroupBase(_Base):
+    def __init__(self, coordinator, entry, group_id, group_name):
+        super().__init__(coordinator, entry)
+        self._group_id = group_id
+        self._group_name = group_name
+
+    def _group_data(self) -> dict[str, Any]:
+        return self.coordinator.data.get("groups", {}).get(self._group_id, {})
+
+
+class EW50EGroupInletTempSensor(_GroupBase):
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer"
+
+    def __init__(self, coordinator, entry, group_id, group_name):
+        super().__init__(coordinator, entry, group_id, group_name)
+        self._attr_unique_id = f"ew50e_group_{group_id}_inlet_temp"
+        self._attr_name = f"{group_name} - Temperatura"
+
+    @property
+    def native_value(self) -> float | None:
+        val = self._group_data().get("inlettemp")
+        try:
+            return float(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        g = self._group_data()
+        return {
+            "gruppo_id": self._group_id,
+            "drive": g.get("drive", ""),
+            "modalita": g.get("mode", ""),
+        }
+
+
+class EW50EGroupSetTempSensor(_GroupBase):
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_icon = "mdi:thermometer-chevron-up"
+
+    def __init__(self, coordinator, entry, group_id, group_name):
+        super().__init__(coordinator, entry, group_id, group_name)
+        self._attr_unique_id = f"ew50e_group_{group_id}_set_temp"
+        self._attr_name = f"{group_name} - Setpoint"
+
+    @property
+    def native_value(self) -> float | None:
+        val = self._group_data().get("settemp")
+        try:
+            return float(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
+
+
+class EW50EGroupStatusSensor(_GroupBase):
+    def __init__(self, coordinator, entry, group_id, group_name):
+        super().__init__(coordinator, entry, group_id, group_name)
+        self._attr_unique_id = f"ew50e_group_{group_id}_status"
+        self._attr_name = f"{group_name} - Stato"
+
+    @property
+    def native_value(self) -> str:
+        g = self._group_data()
+        if g.get("errorsign") == "ON":
+            return "ERRORE"
+        drive = g.get("drive", "")
+        if drive == "ON":
+            mode = g.get("mode", "")
+            return f"ON - {mode}" if mode else "ON"
+        if drive == "OFF":
+            return "OFF"
+        return "N/D"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        g = self._group_data()
+        alarms = self.coordinator.data.get("alarms", [])
+        group_alarms = [a for a in alarms if str(a.get("group", "")) == self._group_id]
+        return {
+            "gruppo_id": self._group_id,
+            "drive": g.get("drive", ""),
+            "modalita": g.get("mode", ""),
+            "velocita_fan": g.get("fanspeed", ""),
+            "direzione_aria": g.get("airdirection", ""),
+            "errore": g.get("errorsign", "OFF"),
+            "codice_errore": g.get("errorcode", ""),
+            "allarmi_attivi": group_alarms,
+        }
+
+    @property
+    def icon(self) -> str:
+        val = self.native_value or ""
+        return "mdi:alert" if "ERRORE" in val else "mdi:air-conditioner"
