@@ -49,7 +49,7 @@ Per i log di Home Assistant, cerca `custom_components.ew50e` nel log di sistema.
 
 ## 📋 Requisiti
 
-- Home Assistant 2023.1 o superiore
+- Home Assistant 2026.1 o superiore
 - EW-50E / EW-C50E raggiungibile sulla rete locale
 - Python `aiohttp >= 3.8.0` (installato automaticamente)
 
