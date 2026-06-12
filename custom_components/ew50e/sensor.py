@@ -1,16 +1,17 @@
-"""Sensori per EW-50E Mitsubishi Electric."""
+"""Sensori per EW-50E Mitsubishi Electric.
+
+Versione semplificata: solo stati e anomalie (niente temperature/setpoint).
+"""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,13 +30,10 @@ async def async_setup_entry(
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = []
-    entities.append(EW50EOutdoorTempSensor(coordinator, entry))
     entities.append(EW50ESystemAlarmSensor(coordinator, entry))
     entities.append(EW50EAlarmCountSensor(coordinator, entry))
 
     for group_id, group_name in coordinator.group_names.items():
-        entities.append(EW50EGroupInletTempSensor(coordinator, entry, group_id, group_name))
-        entities.append(EW50EGroupSetTempSensor(coordinator, entry, group_id, group_name))
         entities.append(EW50EGroupStatusSensor(coordinator, entry, group_id, group_name))
 
     async_add_entities(entities)
@@ -62,21 +60,8 @@ class _Base(CoordinatorEntity, SensorEntity):
         return self.coordinator.last_update_success
 
 
-class EW50EOutdoorTempSensor(_Base):
-    _attr_name = "EW-50E Temperatura Esterna"
-    _attr_unique_id = "ew50e_outdoor_temp"
-    _attr_device_class = SensorDeviceClass.TEMPERATURE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_icon = "mdi:thermometer"
-
-    @property
-    def native_value(self) -> float | None:
-        return self.coordinator.data.get("outdoor_temp")
-
-
 class EW50ESystemAlarmSensor(_Base):
-    _attr_name = "EW-50E Stato Sistema"
+    _attr_name = "EW50E Stato Sistema"
     _attr_unique_id = "ew50e_system_alarm"
 
     @property
@@ -107,7 +92,7 @@ class EW50ESystemAlarmSensor(_Base):
 
 
 class EW50EAlarmCountSensor(_Base):
-    _attr_name = "EW-50E Allarmi Attivi"
+    _attr_name = "EW50E Allarmi Attivi"
     _attr_unique_id = "ew50e_alarm_count"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -145,55 +130,6 @@ class _GroupBase(_Base):
 
     def _group_data(self) -> dict[str, Any]:
         return self.coordinator.data.get("groups", {}).get(self._group_id, {})
-
-
-class EW50EGroupInletTempSensor(_GroupBase):
-    _attr_device_class = SensorDeviceClass.TEMPERATURE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_icon = "mdi:thermometer"
-
-    def __init__(self, coordinator, entry, group_id, group_name):
-        super().__init__(coordinator, entry, group_id, group_name)
-        self._attr_unique_id = f"ew50e_group_{group_id}_inlet_temp"
-        self._attr_name = f"{group_name} - Temperatura"
-
-    @property
-    def native_value(self) -> float | None:
-        val = self._group_data().get("inlettemp")
-        try:
-            return float(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        g = self._group_data()
-        return {
-            "gruppo_id": self._group_id,
-            "drive": g.get("drive", ""),
-            "modalita": g.get("mode", ""),
-        }
-
-
-class EW50EGroupSetTempSensor(_GroupBase):
-    _attr_device_class = SensorDeviceClass.TEMPERATURE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_icon = "mdi:thermometer-chevron-up"
-
-    def __init__(self, coordinator, entry, group_id, group_name):
-        super().__init__(coordinator, entry, group_id, group_name)
-        self._attr_unique_id = f"ew50e_group_{group_id}_set_temp"
-        self._attr_name = f"{group_name} - Setpoint"
-
-    @property
-    def native_value(self) -> float | None:
-        val = self._group_data().get("settemp")
-        try:
-            return float(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
 
 
 class EW50EGroupStatusSensor(_GroupBase):

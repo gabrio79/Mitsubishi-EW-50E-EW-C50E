@@ -1,0 +1,134 @@
+# =============================================================================
+#  EW-50E Mitsubishi - Package notifiche Telegram per anomalie/errori
+#  Sintassi Home Assistant 2024.10+ (triggers/conditions/actions, action:)
+# =============================================================================
+#  Come attivarlo:
+#  1) In configuration.yaml assicurati di avere:
+#       homeassistant:
+#         packages: !include_dir_named packages
+#  2) Copia questo file in:  <config>/packages/ew50e_telegram.yaml
+#  3) Riavvia Home Assistant (o "Ricarica config YAML" -> Template/Automazioni).
+#
+#  Il servizio di notifica usato e':  notify.telegram_nome_del_tuo_bot
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+#  Entita' di aggregazione (non dipendono dai nomi delle 17 zone)
+# ---------------------------------------------------------------------------
+template:
+  - binary_sensor:
+      - name: "EW50E Problema Globale"
+        unique_id: ew50e_problema_globale
+        device_class: problem
+        icon: >-
+          {{ 'mdi:shield-alert' if this.state == 'on' else 'mdi:shield-check' }}
+        state: >-
+          {{ is_state('binary_sensor.ew50e_anomalia_sistema', 'on')
+             or is_state('binary_sensor.ew50e_perdita_gas_refrigerante', 'on')
+             or (states.binary_sensor
+                 | selectattr('attributes.gruppo_id', 'defined')
+                 | selectattr('state', 'eq', 'on') | list | count > 0) }}
+        attributes:
+          zone_in_anomalia: >-
+            {{ states.binary_sensor
+               | selectattr('attributes.gruppo_id', 'defined')
+               | selectattr('state', 'eq', 'on')
+               | map(attribute='name') | list | join(', ') }}
+
+  - sensor:
+      - name: "EW50E Problemi Totali"
+        unique_id: ew50e_problemi_totali
+        state_class: measurement
+        icon: >-
+          {{ 'mdi:alert-circle' if (this.state | int(0)) > 0 else 'mdi:check-circle' }}
+        state: >-
+          {%- set sensori_fissi = 1 if is_state('binary_sensor.ew50e_anomalia_sistema', 'on') else 0 -%}
+          {%- set perdite_gas = 1 if is_state('binary_sensor.ew50e_perdita_gas_refrigerante', 'on') else 0 -%}
+          {%- set sensori_dinamici = states.binary_sensor
+                | selectattr('attributes.gruppo_id', 'defined')
+                | selectattr('state', 'eq', 'on') | list | count -%}
+          {{ sensori_fissi + perdite_gas + sensori_dinamici }}
+
+# ---------------------------------------------------------------------------
+#  Automazioni
+# ---------------------------------------------------------------------------
+automation:
+  # --- Nuova anomalia / errore -> notifica Telegram ------------------------
+  - id: ew50e_telegram_anomalia
+    alias: "EW-50E - Telegram: nuova anomalia"
+    mode: queued
+    max: 10
+    triggers:
+      - trigger: state
+        entity_id: sensor.ew50e_problemi_totali
+    conditions:
+      # Scatta solo quando il numero di problemi AUMENTA (nuovo evento),
+      # ignorando avvii/riconnessioni con stato sconosciuto.
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none
+             and trigger.to_state.state not in ['unknown', 'unavailable']
+             and trigger.from_state.state not in ['unknown', 'unavailable']
+             and (trigger.to_state.state | int(0)) > (trigger.from_state.state | int(0)) }}
+    actions:
+      - variables:
+          dettaglio: >-
+            {%- set ns = namespace(righe=[]) -%}
+            {%- if is_state('binary_sensor.ew50e_anomalia_sistema', 'on') -%}
+              {%- set cod = state_attr('binary_sensor.ew50e_anomalia_sistema', 'codice_errore_sistema') -%}
+              {%- set ns.righe = ns.righe + ['⚠️ Sistema (cod. ' ~ (cod or 'n/d') ~ ')'] -%}
+            {%- endif -%}
+            {%- if is_state('binary_sensor.ew50e_perdita_gas_refrigerante', 'on') -%}
+              {%- set ns.righe = ns.righe + ['🧯 PERDITA GAS REFRIGERANTE'] -%}
+            {%- endif -%}
+            {%- for b in states.binary_sensor
+                  | selectattr('attributes.gruppo_id', 'defined')
+                  | selectattr('state', 'eq', 'on') -%}
+              {%- set cod = b.attributes.codice_errore | default('n/d') -%}
+              {%- set ns.righe = ns.righe + ['🔴 ' ~ b.attributes.nome ~ ' (cod. ' ~ (cod if cod else 'n/d') ~ ')'] -%}
+            {%- endfor -%}
+            {{ ns.righe | join('\n') }}
+      - action: notify.telegram_nome_del_tuo_bot
+        data:
+          title: "🚨 EW-50E — Anomalia rilevata"
+          message: >-
+            Problemi attivi: {{ states('sensor.ew50e_problemi_totali') }}
+
+            {{ dettaglio }}
+
+            Stato sistema: {{ states('sensor.ew50e_stato_sistema') }}
+
+  # --- Tutto rientrato -> notifica di chiusura -----------------------------
+  - id: ew50e_telegram_rientro
+    alias: "EW-50E - Telegram: rientro anomalia"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.ew50e_problema_globale
+        from: "on"
+        to: "off"
+        for:
+          seconds: 30
+    actions:
+      - action: notify.telegram_nome_del_tuo_bot
+        data:
+          title: "✅ EW-50E — Tutto regolare"
+          message: >-
+            Nessuna anomalia attiva. L'impianto è tornato in stato normale.
+
+  # --- Avviso se l'integrazione diventa irraggiungibile --------------------
+  - id: ew50e_telegram_offline
+    alias: "EW-50E - Telegram: integrazione non disponibile"
+    mode: single
+    triggers:
+      - trigger: state
+        entity_id: sensor.ew50e_stato_sistema
+        to: "unavailable"
+        for:
+          minutes: 5
+    actions:
+      - action: notify.telegram_nome_del_tuo_bot
+        data:
+          title: "📡 EW-50E — Connessione persa"
+          message: >-
+            L'EW-50E non risponde da almeno 5 minuti. Controlla rete/dispositivo.

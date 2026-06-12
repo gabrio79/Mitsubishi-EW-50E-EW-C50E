@@ -1,0 +1,121 @@
+# =============================================================================
+#  EW-50E Mitsubishi - Dashboard Lovelace (solo stati e anomalie)
+# =============================================================================
+#  Componenti HACS richiesti (Frontend):
+#    - Mushroom            (custom:mushroom-*)
+#    - auto-entities       (custom:auto-entities)
+#  Opzionale:
+#    - card-mod            (per piccoli ritocchi estetici, non indispensabile)
+#
+#  Come usarlo:
+#  A) Dashboard YAML dedicata:
+#     configuration.yaml ->
+#       lovelace:
+#         dashboards:
+#           ew50e-dashboard:
+#             mode: yaml
+#             title: Clima EW-50E
+#             icon: mdi:air-conditioner
+#             show_in_sidebar: true
+#             filename: dashboards/ew50e.yaml
+#  B) Oppure: nuova dashboard dall'interfaccia -> "Modifica" -> menu ->
+#     "Editor di codice" -> incolla il contenuto sotto "views:".
+# =============================================================================
+
+title: Clima EW-50E
+views:
+  - title: Stato Impianto
+    path: ew50e
+    icon: mdi:air-conditioner
+    cards:
+      # ---- Banner stato globale -------------------------------------------
+      - type: custom:mushroom-template-card
+        primary: >-
+          {{ 'ANOMALIA RILEVATA' if is_state('binary_sensor.ew50e_problema_globale','on')
+             else 'Tutto regolare' }}
+        secondary: >-
+          {% if is_state('binary_sensor.ew50e_problema_globale','on') %}
+            {{ states('sensor.ew50e_problemi_totali') }} problema/i attivo/i
+          {% else %}
+            Nessuna anomalia attiva
+          {% endif %}
+        icon: >-
+          {{ 'mdi:shield-alert' if is_state('binary_sensor.ew50e_problema_globale','on')
+             else 'mdi:shield-check' }}
+        icon_color: >-
+          {{ 'red' if is_state('binary_sensor.ew50e_problema_globale','on') else 'green' }}
+        layout: horizontal
+        fill_container: true
+        tap_action:
+          action: none
+
+      # ---- Riepilogo (chips) ----------------------------------------------
+      - type: custom:mushroom-chips-card
+        alignment: center
+        chips:
+          - type: entity
+            entity: sensor.ew50e_stato_sistema
+            icon: mdi:hvac
+          - type: entity
+            entity: sensor.ew50e_problemi_totali
+            icon: mdi:alert-circle-outline
+          - type: entity
+            entity: sensor.ew50e_allarmi_attivi
+            icon: mdi:bell-alert-outline
+          - type: entity
+            entity: binary_sensor.ew50e_perdita_gas_refrigerante
+            icon: mdi:molecule
+
+      # ---- Anomalie attive (compare solo se ce ne sono) -------------------
+      - type: custom:auto-entities
+        show_empty: false
+        card:
+          type: entities
+          title: "⚠️ Anomalie attive"
+          state_color: true
+        filter:
+          include:
+            - domain: binary_sensor
+              state: "on"
+              attributes:
+                gruppo_id: "*"
+              options:
+                secondary_info: last-changed
+            - entity_id: binary_sensor.ew50e_anomalia_sistema
+              state: "on"
+            - entity_id: binary_sensor.ew50e_perdita_gas_refrigerante
+              state: "on"
+        sort:
+          method: friendly_name
+
+      # ---- Stato di tutte le zone -----------------------------------------
+      - type: custom:auto-entities
+        card:
+          type: entities
+          title: Stato zone
+          state_color: true
+        filter:
+          include:
+            - domain: sensor
+              attributes:
+                gruppo_id: "*"
+              options:
+                secondary_info: last-changed
+        sort:
+          method: friendly_name
+
+      # ---- Dettaglio allarmi di sistema -----------------------------------
+      - type: entities
+        title: Diagnostica sistema
+        show_header_toggle: false
+        entities:
+          - entity: sensor.ew50e_stato_sistema
+            name: Stato sistema
+          - entity: binary_sensor.ew50e_anomalia_sistema
+            name: Anomalia sistema
+          - entity: binary_sensor.ew50e_perdita_gas_refrigerante
+            name: Perdita gas refrigerante
+          - entity: sensor.ew50e_allarmi_attivi
+            name: Allarmi attivi
+          - entity: sensor.ew50e_problemi_totali
+            name: Problemi totali

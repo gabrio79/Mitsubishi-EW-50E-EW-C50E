@@ -56,7 +56,7 @@ class _Base(CoordinatorEntity, BinarySensorEntity):
 
 
 class EW50ESystemAlarmBinarySensor(_Base):
-    _attr_name = "EW-50E Anomalia Sistema"
+    _attr_name = "EW50E Anomalia Sistema"
     _attr_unique_id = "ew50e_system_problem"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -84,7 +84,7 @@ class EW50ESystemAlarmBinarySensor(_Base):
 
 
 class EW50ERefLeakBinarySensor(_Base):
-    _attr_name = "EW-50E Perdita Gas Refrigerante"
+    _attr_name = "EW50E Perdita Gas Refrigerante"
     _attr_unique_id = "ew50e_ref_leak"
     _attr_device_class = BinarySensorDeviceClass.GAS
     _attr_icon = "mdi:molecule"
