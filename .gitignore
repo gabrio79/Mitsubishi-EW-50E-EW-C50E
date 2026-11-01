@@ -1,6 +1,22 @@
+# OS & Editor
 .DS_Store
+.vscode/
+.idea/
+.claude/
+best_practice_gabrio.md
+
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 .pytest_cache/
+.venv/
+venv/
+
+# Home Assistant & Secrets
+secrets.yaml
+.storage/
+*.db
+*.db-shm
+*.db-wal
+*.log

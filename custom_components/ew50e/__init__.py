@@ -1,11 +1,12 @@
 """EW-50E Mitsubishi Electric - Custom Integration per Home Assistant.
 
 Versione semplificata: monitora solo stati e anomalie.
-Non legge piu' temperature (esterna/ingresso) ne' setpoint.
+Non legge più temperature (esterna/ingresso) né setpoint.
 """
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import ssl
 import xml.etree.ElementTree as ET
@@ -13,7 +14,6 @@ from datetime import timedelta
 from typing import Any
 
 import aiohttp
-import async_timeout
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platform
@@ -24,8 +24,37 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "ew50e"
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 SCAN_INTERVAL = timedelta(seconds=30)
+WS_SUBPROTOCOL = "b_xmlproc"
 
-# Nomi gruppi configurati sull'EW-50E (fallback hardcodato)
+# Attributi M-NET richiesti per ogni gruppo (sintassi wildcard EW-50E / AE-200)
+MNET_STATE_ATTRS: tuple[str, ...] = (
+    "Drive",
+    "Mode",
+    "AirDirection",
+    "FanSpeed",
+    "ErrorSign",
+    "FilterSign",
+)
+
+# Attributi SystemAlarm richiesti al FreezerServlet dell'EW-50E
+SYSTEM_ALARM_ATTRS: tuple[str, ...] = (
+    "Alert",
+    "AlertTriggerLevel",
+    "AlertTriggerAddress",
+    "AlertTriggerErrorCode",
+    "BuzzerLamp",
+    "BuzzerLampTriggerLevel",
+    "BuzzerLampTriggerAddress",
+    "BuzzerLampTriggerErrorCode",
+    "BuzzerLampTriggerErrorInfo",
+    "RefLeakAddress",
+    "RefLeakAlarm",
+    "RefLeakAlarmCode",
+    "RefLeakAlarmLevel",
+    "RefLeakAlarmType",
+)
+
+# Nomi gruppi configurati sull'EW-50E (fallback se GroupNameWeb è vuoto)
 KNOWN_GROUP_NAMES: dict[str, str] = {
     "1": "Farmacia - Magazzino",
     "2": "Farmacia - Cassettie",
@@ -47,7 +76,12 @@ KNOWN_GROUP_NAMES: dict[str, str] = {
 }
 
 
+class EW50EAuthError(Exception):
+    """Errore di autenticazione verso EW-50E."""
+
+
 def _make_ssl_context() -> ssl.SSLContext:
+    """Crea un contesto SSL leggero per certificato self-signed senza bloccare l'event loop."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -55,7 +89,12 @@ def _make_ssl_context() -> ssl.SSLContext:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    client = EW50EClient(entry.data[CONF_HOST], entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD])
+    """Configura l'integrazione EW-50E da una ConfigEntry."""
+    client = EW50EClient(
+        entry.data[CONF_HOST],
+        entry.data[CONF_USERNAME],
+        entry.data[CONF_PASSWORD],
+    )
     coordinator = EW50ECoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -64,6 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Scarica la ConfigEntry e chiude le connessioni aperte."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: EW50ECoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.client.disconnect()
@@ -71,6 +111,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 class EW50EClient:
+    """Client asincrono HTTPS + WebSocket XML (b_xmlproc) per Mitsubishi EW-50E / EW-C50E."""
+
     def __init__(self, host: str, username: str, password: str) -> None:
         self.host = host
         self.username = username
@@ -79,6 +121,15 @@ class EW50EClient:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._session: aiohttp.ClientSession | None = None
         self._ssl_ctx: ssl.SSLContext | None = None
+        self._lock = asyncio.Lock()
+        self._first_connect_logged: bool = False
+        # Cache cumulativa per preservare stati aggiornati anche via notifyRequest
+        self._cached_state: dict[str, Any] = {
+            "groups": {},
+            "alarms": [],
+            "system_alarm": {},
+            "mnet_status": "NORMAL",
+        }
 
     def _get_ssl_ctx(self) -> ssl.SSLContext:
         if self._ssl_ctx is None:
@@ -92,184 +143,447 @@ class EW50EClient:
         return self._session
 
     async def login(self) -> bool:
-        _LOGGER.info("EW-50E: login su %s...", self.host)
+        """Effettua il login Basic Auth su /servlet/Login e ottiene il Bearer token."""
+        _LOGGER.debug("EW-50E: login su %s...", self.host)
         session = self._get_session()
         url = f"https://{self.host}/servlet/Login"
         auth = aiohttp.BasicAuth(self.username, self.password)
-        async with async_timeout.timeout(10):
-            async with session.get(url, auth=auth) as resp:
+        headers = {"Content-Type": "text/plain"}
+        async with asyncio.timeout(10):
+            async with session.get(url, auth=auth, headers=headers) as resp:
+                if resp.status in (401, 403):
+                    raise EW50EAuthError(
+                        f"Credenziali non valide per {self.host} (HTTP {resp.status})"
+                    )
                 if resp.status != 200:
-                    raise ValueError(f"Login fallito, status={resp.status}")
+                    raise ValueError(f"Login fallito su {self.host}, HTTP {resp.status}")
                 token = (await resp.text()).strip()
                 if not token:
-                    raise ValueError("Token vuoto ricevuto dal login")
+                    raise EW50EAuthError("Token vuoto ricevuto da /servlet/Login")
                 self._token = token
                 return True
 
+    async def refresh_token(self) -> bool:
+        """Rinnova il token di accesso tramite /servlet/Update (fallback su login completo)."""
+        if not self._token:
+            return await self.login()
+        session = self._get_session()
+        url = f"https://{self.host}/servlet/Update"
+        headers = {
+            "Content-Type": "text/plain",
+            "Authorization": f"Bearer {self._token}",
+        }
+        try:
+            async with asyncio.timeout(10):
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        new_token = (await resp.text()).strip()
+                        if new_token:
+                            self._token = new_token
+                            return True
+        except (aiohttp.ClientError, TimeoutError):
+            pass
+        self._token = None
+        return await self.login()
+
     async def connect(self) -> None:
+        """Apre il WebSocket autenticato su wss://<host>/b_xmlproc/?token=... con subprotocol b_xmlproc."""
         if not self._token:
             await self.login()
         session = self._get_session()
         ws_url = f"wss://{self.host}/b_xmlproc/?token={self._token}"
-        self._ws = await session.ws_connect(ws_url, ssl=self._get_ssl_ctx(), heartbeat=30)
-        _LOGGER.debug("EW-50E: WebSocket connesso a %s", self.host)
+        headers = {"Origin": f"https://{self.host}"}
+        try:
+            async with asyncio.timeout(10):
+                self._ws = await session.ws_connect(
+                    ws_url,
+                    ssl=self._get_ssl_ctx(),
+                    protocols=(WS_SUBPROTOCOL,),
+                    headers=headers,
+                    heartbeat=25,
+                )
+        except aiohttp.WSServerHandshakeError as err:
+            if err.status in (401, 403):
+                # Il token potrebbe essere scaduto: rinnova e riprova una volta
+                _LOGGER.debug("EW-50E: token WS scaduto (HTTP %s), rinnovo login...", err.status)
+                self._token = None
+                await self.login()
+                ws_url = f"wss://{self.host}/b_xmlproc/?token={self._token}"
+                async with asyncio.timeout(10):
+                    self._ws = await session.ws_connect(
+                        ws_url,
+                        ssl=self._get_ssl_ctx(),
+                        protocols=(WS_SUBPROTOCOL,),
+                        headers=headers,
+                        heartbeat=25,
+                    )
+            else:
+                raise
+
+        if not self._first_connect_logged:
+            _LOGGER.info("EW-50E: connesso via WebSocket (b_xmlproc) a %s", self.host)
+            self._first_connect_logged = True
+        else:
+            _LOGGER.debug("EW-50E: WebSocket riconnesso a %s", self.host)
+
+        # Invia l'handshake MnetStatus come fa l'interfaccia web ufficiale all'apertura
+        await self._send_and_wait_get_response(self._xml_get_mnet_status(), timeout=6.0)
 
     async def disconnect(self) -> None:
+        """Chiude il WebSocket e la sessione HTTP."""
         if self._ws and not self._ws.closed:
             await self._ws.close()
+        self._ws = None
         if self._session and not self._session.closed:
             await self._session.close()
+        self._session = None
 
     async def _ensure_connected(self) -> None:
         if self._ws is None or self._ws.closed:
-            _LOGGER.info("EW-50E: riconnessione...")
-            self._token = None
             await self.connect()
 
-    async def send_request(self, xml_command: str) -> None:
-        await self._ensure_connected()
-        await self._ws.send_str(xml_command)
+    def _strip_http_envelope(self, raw: str) -> str:
+        """Rimuove eventuali intestazioni HTTP preposte dal controller prima di <?xml o <Packet>."""
+        idx = raw.find("<?xml")
+        if idx == -1:
+            idx = raw.find("<Packet")
+        return raw[idx:] if idx > 0 else raw
 
-    async def receive_messages(self, timeout: float = 5.0) -> list[ET.Element]:
-        messages = []
-        loop = asyncio.get_event_loop()
+    async def _send_and_wait_get_response(
+        self, payload: str, timeout: float = 8.0
+    ) -> list[ET.Element]:
+        """Invia un comando XML e raccoglie i pacchetti (inclusi notifyRequest) fino al getResponse."""
+        await self._ensure_connected()
+        assert self._ws is not None
+        await self._ws.send_str(payload)
+
+        collected: list[ET.Element] = []
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+
         while True:
             remaining = deadline - loop.time()
-            if remaining <= 0:
+            if remaining <= 0 or self._ws is None:
                 break
             try:
                 msg = await asyncio.wait_for(self._ws.receive(), timeout=remaining)
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    try:
-                        root = ET.fromstring(msg.data)
-                        messages.append(root)
-                    except ET.ParseError as e:
-                        _LOGGER.warning("XML non valido: %s", e)
-                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                    _LOGGER.warning("WebSocket chiuso/errore: %s", msg.type)
-                    self._ws = None
-                    break
-            except asyncio.TimeoutError:
+            except TimeoutError:
+                _LOGGER.debug("EW-50E: timeout in attesa di getResponse (%.1fs)", timeout)
                 break
-        return messages
+
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                xml_str = self._strip_http_envelope(msg.data)
+                try:
+                    root = ET.fromstring(xml_str)
+                except ET.ParseError as err:
+                    _LOGGER.debug("EW-50E: XML non valido ignorato (%s): %.120r", err, msg.data)
+                    continue
+
+                collected.append(root)
+                cmd = (root.findtext("Command") or "").strip()
+                if cmd in ("getResponse", "getErrorResponse", "setResponse", "setErrorResponse"):
+                    break
+            elif msg.type in (
+                aiohttp.WSMsgType.CLOSED,
+                aiohttp.WSMsgType.CLOSING,
+                aiohttp.WSMsgType.ERROR,
+            ):
+                _LOGGER.debug("EW-50E: WebSocket chiuso durante ricezione (%s)", msg.type)
+                self._ws = None
+                break
+
+        return collected
+
+    async def _drain_notifications(self, timeout: float = 0.25) -> list[ET.Element]:
+        """Legge eventuali notifyRequest spontanei già presenti nel buffer del WebSocket."""
+        if self._ws is None or self._ws.closed:
+            return []
+        collected: list[ET.Element] = []
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0 or self._ws is None:
+                break
+            try:
+                msg = await asyncio.wait_for(self._ws.receive(), timeout=remaining)
+            except TimeoutError:
+                break
+            if msg.type == aiohttp.WSMsgType.TEXT:
+                xml_str = self._strip_http_envelope(msg.data)
+                try:
+                    collected.append(ET.fromstring(xml_str))
+                except ET.ParseError:
+                    continue
+            elif msg.type in (
+                aiohttp.WSMsgType.CLOSED,
+                aiohttp.WSMsgType.CLOSING,
+                aiohttp.WSMsgType.ERROR,
+            ):
+                self._ws = None
+                break
+        return collected
+
+    # ------------------------------------------------------------------
+    # Costruttori XML ufficiali Mitsubishi EW-50E (estratti da main.js)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _wrap_packet(inner_xml: str, servlet_header: str | None = None) -> str:
+        prefix = f"{servlet_header}\r\n\r\n" if servlet_header else ""
+        return (
+            f"{prefix}"
+            '<?xml version="1.0" encoding="UTF-8" ?>\r\n'
+            "<Packet>\r\n"
+            "<Command>getRequest</Command>\r\n"
+            "<DatabaseManager>\r\n"
+            f"{inner_xml}"
+            "</DatabaseManager>\r\n"
+            "</Packet>"
+        )
+
+    def _xml_get_mnet_status(self) -> str:
+        return self._wrap_packet('<SystemData MnetStatus="*" />\r\n')
+
+    def _xml_get_group_list(self) -> str:
+        return self._wrap_packet("<ControlGroup>\r\n<MnetList />\r\n</ControlGroup>\r\n")
+
+    def _xml_get_groups_state(self, group_ids: list[str]) -> str:
+        attrs = " ".join(f'{attr}="*"' for attr in MNET_STATE_ATTRS)
+        lines = "".join(
+            f'<Mnet Group="{html.escape(gid, quote=True)}" {attrs} />\r\n'
+            for gid in group_ids
+        )
+        return self._wrap_packet(lines)
 
     def _xml_get_alarm_list(self) -> str:
-        return '<?xml version="1.0" encoding="UTF-8"?><Packet><Command>getRequest</Command><DatabaseManager><Mnet><AlarmStatusList/></Mnet></DatabaseManager></Packet>'
+        return self._wrap_packet("<Mnet>\r\n<AlarmStatusList />\r\n</Mnet>\r\n")
 
     def _xml_get_system_alarm(self) -> str:
-        return '<?xml version="1.0" encoding="UTF-8"?><Packet><Command>getRequest</Command><DatabaseManager><SystemAlarm/></DatabaseManager></Packet>'
+        attrs = " ".join(f'{attr}="*"' for attr in SYSTEM_ALARM_ATTRS)
+        return self._wrap_packet(
+            f"<SystemAlarm {attrs} />\r\n",
+            servlet_header="POST /servlet/FreezerServlet HTTP/1.1",
+        )
+
+    # ------------------------------------------------------------------
+    # Operazioni ad alto livello
+    # ------------------------------------------------------------------
 
     async def discover_groups(self) -> dict[str, str]:
-        """
-        Scopre i gruppi attivi ascoltando i notifyRequest iniziali,
-        poi li arricchisce con i nomi noti. Gruppi non nei notify
-        vengono comunque aggiunti se presenti in KNOWN_GROUP_NAMES.
-        """
-        await self._ensure_connected()
+        """Scopre i gruppi configurati e i relativi GroupNameWeb tramite ControlGroup/MnetList."""
+        async with self._lock:
+            packets = await self._send_and_wait_get_response(
+                self._xml_get_group_list(), timeout=10.0
+            )
+            # Aggiorna subito eventuali notify ricevuti nel frattempo
+            self._apply_packets_to_cache(packets)
 
-        # Ascolta i notify iniziali per scoprire gruppi attivi
-        _LOGGER.info("EW-50E: ascolto notify iniziali...")
-        initial = await self.receive_messages(timeout=8.0)
+            discovered: dict[str, str] = {}
+            for packet in packets:
+                for rec in packet.findall(".//ControlGroup/MnetList/MnetRecord"):
+                    gid = (rec.get("Group") or "").strip()
+                    if not gid:
+                        continue
+                    web_name = (rec.get("GroupNameWeb") or rec.get("GroupName") or "").strip()
+                    discovered[gid] = web_name
 
-        found_groups: set[str] = set()
-        for packet in initial:
-            db = packet.find("DatabaseManager")
-            if db is None:
-                continue
-            for mnet in db.findall("Mnet"):
-                gid = mnet.get("Group")
-                if gid:
-                    found_groups.add(gid)
+            all_groups = set(discovered.keys()) if discovered else set(KNOWN_GROUP_NAMES.keys())
 
-        _LOGGER.info("EW-50E: gruppi da notify: %s", found_groups)
+            group_names: dict[str, str] = {}
+            for gid in sorted(all_groups, key=lambda x: int(x) if x.isdigit() else 0):
+                web_name = discovered.get(gid, "")
+                known_name = KNOWN_GROUP_NAMES.get(gid, "")
+                if web_name and known_name:
+                    norm_web = web_name.replace(" ", "").lower()
+                    norm_known = known_name.replace(" ", "").lower()
+                    # L'hardware EW-50E tronca GroupNameWeb a 20 caratteri:
+                    # se il nome letto è il prefisso troncato del nome noto, ripristina la dicitura completa
+                    if norm_known.startswith(norm_web):
+                        group_names[gid] = known_name
+                    else:
+                        group_names[gid] = web_name
+                elif web_name:
+                    group_names[gid] = web_name
+                elif known_name:
+                    group_names[gid] = known_name
+                else:
+                    group_names[gid] = f"Gruppo {gid}"
 
-        # Usa tutti i gruppi noti come base (1-17)
-        # I notify potrebbero non coprirli tutti
-        all_groups = set(KNOWN_GROUP_NAMES.keys()) | found_groups
+            _LOGGER.info(
+                "EW-50E: discovery completata (%d gruppi rilevati dal controller)",
+                len(group_names),
+            )
+            _LOGGER.debug("EW-50E: mappa gruppi = %s", group_names)
+            return group_names
 
-        group_names: dict[str, str] = {}
-        for gid in sorted(all_groups, key=lambda x: int(x) if x.isdigit() else 0):
-            # Usa il nome noto se disponibile
-            if gid in KNOWN_GROUP_NAMES:
-                group_names[gid] = KNOWN_GROUP_NAMES[gid]
-            else:
-                group_names[gid] = f"Gruppo {gid}"
+    async def fetch_all_data(self, group_ids: list[str] | None = None) -> dict[str, Any]:
+        """Esegue il polling sequenziale ordinato di MnetStatus, Gruppi, AlarmStatusList e SystemAlarm."""
+        async with self._lock:
+            target_groups = group_ids if group_ids else list(KNOWN_GROUP_NAMES.keys())
+            packets: list[ET.Element] = []
 
-        _LOGGER.info("EW-50E: discovery completata, %d gruppi: %s", len(group_names), group_names)
-        return group_names
+            # 1. Drena eventuali notify spontanei arrivati tra un ciclo e l'altro
+            packets.extend(await self._drain_notifications(timeout=0.2))
 
-    async def fetch_all_data(self) -> dict[str, Any]:
-        await self._ensure_connected()
-        # Richiedi ogni gruppo singolarmente (stato + eventuali errori)
-        for gid in range(1, 18):
-            await self.send_request(f'<?xml version="1.0" encoding="UTF-8"?><Packet><Command>getRequest</Command><DatabaseManager><Mnet Group="{gid}" Attribute="All"/></DatabaseManager></Packet>')
-            await asyncio.sleep(0.1)
-        await self.send_request(self._xml_get_alarm_list())
-        await self.send_request(self._xml_get_system_alarm())
-        await asyncio.sleep(1)
-        messages = await self.receive_messages(timeout=8.0)
-        return self._parse_messages(messages)
+            # 2. Stato globale M-NET
+            packets.extend(
+                await self._send_and_wait_get_response(self._xml_get_mnet_status(), timeout=6.0)
+            )
 
-    def _parse_messages(self, messages: list[ET.Element]) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "groups": {}, "alarms": [], "system_alarm": {},
-            "mnet_status": "UNKNOWN",
-        }
+            # 3. Stato di tutti i gruppi (singola richiesta batch; fallback per-gruppo se vuoto)
+            group_packets = await self._send_and_wait_get_response(
+                self._xml_get_groups_state(target_groups), timeout=10.0
+            )
+            packets.extend(group_packets)
+
+            # Verifica se la risposta batch conteneva tag <Mnet Group="...">
+            has_mnet = any(
+                p.find(".//DatabaseManager/Mnet") is not None for p in group_packets
+            )
+            if not has_mnet:
+                _LOGGER.debug("EW-50E: risposta batch vuota, interrogo i gruppi singolarmente")
+                for gid in target_groups:
+                    packets.extend(
+                        await self._send_and_wait_get_response(
+                            self._xml_get_groups_state([gid]), timeout=5.0
+                        )
+                    )
+
+            # 4. Lista allarmi M-NET (AlarmStatusList)
+            alarm_packets = await self._send_and_wait_get_response(
+                self._xml_get_alarm_list(), timeout=8.0
+            )
+            packets.extend(alarm_packets)
+
+            # 5. Allarme globale di sistema / perdita gas (FreezerServlet -> SystemAlarm)
+            sys_alarm_packets = await self._send_and_wait_get_response(
+                self._xml_get_system_alarm(), timeout=6.0
+            )
+            # Se FreezerServlet restituisce errore o vuoto su modelli senza modulo Freezer,
+            # proviamo anche senza l'header FreezerServlet
+            has_sys_alarm = any(
+                p.find(".//DatabaseManager/SystemAlarm") is not None for p in sys_alarm_packets
+            )
+            if not has_sys_alarm:
+                attrs = " ".join(f'{attr}="*"' for attr in SYSTEM_ALARM_ATTRS)
+                fallback_xml = self._wrap_packet(f"<SystemAlarm {attrs} />\r\n")
+                sys_alarm_packets.extend(
+                    await self._send_and_wait_get_response(fallback_xml, timeout=5.0)
+                )
+            packets.extend(sys_alarm_packets)
+
+            self._apply_packets_to_cache(packets)
+            return {
+                "groups": {k: dict(v) for k, v in self._cached_state["groups"].items()},
+                "alarms": list(self._cached_state["alarms"]),
+                "system_alarm": dict(self._cached_state["system_alarm"]),
+                "mnet_status": self._cached_state["mnet_status"],
+            }
+
+    def _apply_packets_to_cache(self, messages: list[ET.Element]) -> None:
+        """Aggiorna lo stato cumulativo dai pacchetti XML ricevuti (getResponse e notifyRequest)."""
+        alarm_codes_by_group: dict[str, str] = {}
+
         for packet in messages:
             db = packet.find("DatabaseManager")
             if db is None:
                 continue
+
             sys_data = db.find("SystemData")
             if sys_data is not None:
-                data["mnet_status"] = sys_data.get("MnetStatus", "UNKNOWN")
+                mnet_st = sys_data.get("MnetStatus")
+                if mnet_st and mnet_st != "*":
+                    self._cached_state["mnet_status"] = mnet_st
+
             sys_alarm = db.find("SystemAlarm")
             if sys_alarm is not None:
-                data["system_alarm"] = {
-                    "alert": sys_alarm.get("Alert", "OFF"),
-                    "alert_level": sys_alarm.get("AlertTriggerLevel", "0"),
-                    "alert_address": sys_alarm.get("AlertTriggerAddress", "0"),
-                    "error_code": sys_alarm.get("AlertTriggerErrorCode", "0000"),
-                    "buzzer_lamp": sys_alarm.get("BuzzerLamp", "OFF"),
-                    "ref_leak_alarm": sys_alarm.get("RefLeakAlarm", "OFF"),
+                def _clean(val: str | None, default: str) -> str:
+                    return default if val in (None, "", "*") else val
+
+                self._cached_state["system_alarm"] = {
+                    "alert": _clean(sys_alarm.get("Alert"), "OFF"),
+                    "alert_level": _clean(sys_alarm.get("AlertTriggerLevel"), "0"),
+                    "alert_address": _clean(sys_alarm.get("AlertTriggerAddress"), "0"),
+                    "error_code": _clean(sys_alarm.get("AlertTriggerErrorCode"), "0000"),
+                    "buzzer_lamp": _clean(sys_alarm.get("BuzzerLamp"), "OFF"),
+                    "ref_leak_alarm": _clean(sys_alarm.get("RefLeakAlarm"), "OFF"),
                 }
+
             alarm_list = db.find(".//AlarmStatusList")
             if alarm_list is not None:
+                # Sostituisce la lista allarmi corrente con lo snapshot aggiornato dal controller
+                new_alarms: list[dict[str, str]] = []
                 for alarm in alarm_list.findall("AlarmStatusRecord"):
-                    data["alarms"].append({
-                        "group": alarm.get("Group", ""),
-                        "address": alarm.get("Address", ""),
-                        "error_code": alarm.get("ErrorCode", ""),
-                        "error_level": alarm.get("ErrorLevel", ""),
-                        "error_type": alarm.get("ErrorType", ""),
+                    grp = (alarm.get("Group") or "").strip()
+                    code = (
+                        alarm.get("AlarmCode")
+                        or alarm.get("ErrorCode")
+                        or ""
+                    ).strip()
+                    new_alarms.append({
+                        "group": grp,
+                        "address": (alarm.get("Address") or "").strip(),
+                        "error_code": code,
+                        "error_level": (alarm.get("ErrorLevel") or "").strip(),
+                        "error_type": (
+                            alarm.get("Model") or alarm.get("ErrorType") or ""
+                        ).strip(),
+                        "group_name_web": (alarm.get("GroupNameWeb") or "").strip(),
                     })
+                    if grp and code:
+                        alarm_codes_by_group[grp] = code
+                self._cached_state["alarms"] = new_alarms
+
             for mnet in db.findall("Mnet"):
-                group = mnet.get("Group")
-                if group:
-                    if group not in data["groups"]:
-                        data["groups"][group] = {}
-                    g = data["groups"][group]
-                    # Solo attributi di stato/anomalia: niente SetTemp/InletTemp
-                    for attr in ["Drive", "Mode", "AirDirection",
-                                 "FanSpeed", "ErrorSign", "ErrorCode", "GroupName"]:
-                        val = mnet.get(attr)
-                        if val is not None:
-                            g[attr.lower()] = val
+                group = (mnet.get("Group") or "").strip()
+                if not group:
+                    continue
+                attrs = {k: v for k, v in mnet.attrib.items() if k != "Group"}
+                # Ignora i gruppi non configurati che rimandano indietro solo "*"
+                if attrs and all(v == "*" for v in attrs.values()):
+                    continue
+
+                g = self._cached_state["groups"].setdefault(group, {})
+                for attr in (
+                    "Drive",
+                    "Mode",
+                    "AirDirection",
+                    "FanSpeed",
+                    "ErrorSign",
+                    "FilterSign",
+                    "ErrorCode",
+                    "AlarmCode",
+                    "GroupName",
+                    "GroupNameWeb",
+                ):
+                    val = mnet.get(attr)
+                    if val is not None and val != "*":
+                        g[attr.lower()] = val
+
             for ref in db.findall("RefUnit"):
-                if ref.get("ErrorSign") == "ON":
-                    ec = ref.get("ErrorCode", "")
+                if ref.get("ErrorSign") in ("ON", "1"):
+                    ec = (ref.get("ErrorCode") or ref.get("AlarmCode") or "").strip()
                     if ec:
-                        data["alarms"].append({
+                        self._cached_state["alarms"].append({
                             "group": "",
-                            "address": ref.get("Address", ""),
+                            "address": (ref.get("Address") or "").strip(),
                             "error_code": ec,
-                            "error_level": ref.get("ErrorLevel", ""),
+                            "error_level": (ref.get("ErrorLevel") or "").strip(),
                             "error_type": "RefUnit",
                         })
-        return data
+
+        # Sincronizza codice errore sui singoli gruppi dalla AlarmStatusList
+        for gid, g in self._cached_state["groups"].items():
+            if gid in alarm_codes_by_group:
+                g["errorcode"] = alarm_codes_by_group[gid]
+            elif g.get("errorsign") in ("OFF", "0", "", None):
+                g["errorcode"] = ""
 
 
-class EW50ECoordinator(DataUpdateCoordinator):
+class EW50ECoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Coordinator per l'aggiornamento periodico dei dati dall'EW-50E."""
+
     def __init__(self, hass: HomeAssistant, client: EW50EClient) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL)
         self.client = client
@@ -277,12 +591,11 @@ class EW50ECoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            async with async_timeout.timeout(60):
+            async with asyncio.timeout(60):
                 if not self.group_names:
                     self.group_names = await self.client.discover_groups()
-                    _LOGGER.info("EW-50E: gruppi attivi: %s", self.group_names)
 
-                data = await self.client.fetch_all_data()
+                data = await self.client.fetch_all_data(list(self.group_names.keys()))
 
                 for gid in list(data["groups"].keys()) + list(self.group_names.keys()):
                     if gid not in data["groups"]:
@@ -295,10 +608,12 @@ class EW50ECoordinator(DataUpdateCoordinator):
 
                 return data
 
+        except EW50EAuthError as err:
+            raise UpdateFailed(f"Autenticazione EW-50E fallita: {err}") from err
         except aiohttp.ClientError as err:
-            raise UpdateFailed(f"Errore connessione: {err}") from err
-        except asyncio.TimeoutError:
-            raise UpdateFailed("Timeout connessione")
+            raise UpdateFailed(f"Errore connessione EW-50E ({self.client.host}): {err}") from err
+        except TimeoutError as err:
+            raise UpdateFailed(f"Timeout connessione EW-50E ({self.client.host})") from err
         except Exception as err:
-            _LOGGER.exception("Errore imprevisto EW-50E")
-            raise UpdateFailed(f"Errore: {err}") from err
+            _LOGGER.error("Errore durante l'aggiornamento EW-50E: %s", err)
+            raise UpdateFailed(f"Errore EW-50E: {err}") from err

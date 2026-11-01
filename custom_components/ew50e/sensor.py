@@ -27,14 +27,18 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Configura i sensori per l'EW-50E."""
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[SensorEntity] = []
-    entities.append(EW50ESystemAlarmSensor(coordinator, entry))
-    entities.append(EW50EAlarmCountSensor(coordinator, entry))
+    entities: list[SensorEntity] = [
+        EW50ESystemAlarmSensor(coordinator, entry),
+        EW50EAlarmCountSensor(coordinator, entry),
+    ]
 
     for group_id, group_name in coordinator.group_names.items():
-        entities.append(EW50EGroupStatusSensor(coordinator, entry, group_id, group_name))
+        entities.append(
+            EW50EGroupStatusSensor(coordinator, entry, group_id, group_name)
+        )
 
     async_add_entities(entities)
 
@@ -49,7 +53,7 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
     )
 
 
-class _Base(CoordinatorEntity, SensorEntity):
+class _Base(CoordinatorEntity[EW50ECoordinator], SensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
@@ -69,8 +73,8 @@ class EW50ESystemAlarmSensor(_Base):
         alarm = self.coordinator.data.get("system_alarm", {})
         if alarm.get("alert") == "ON":
             return "ALLARME"
-        mnet = self.coordinator.data.get("mnet_status", "UNKNOWN")
-        return "NORMALE" if mnet == "NORMAL" else mnet
+        mnet = self.coordinator.data.get("mnet_status", "NORMAL")
+        return "NORMALE" if mnet in ("NORMAL", "UNKNOWN") else mnet
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -82,7 +86,7 @@ class EW50ESystemAlarmSensor(_Base):
             "codice_errore": alarm.get("error_code", "0000"),
             "buzzer_lampeggio": alarm.get("buzzer_lamp", "OFF"),
             "allarme_perdita_gas": alarm.get("ref_leak_alarm", "OFF"),
-            "stato_mnet": self.coordinator.data.get("mnet_status", "UNKNOWN"),
+            "stato_mnet": self.coordinator.data.get("mnet_status", "NORMAL"),
         }
 
     @property
@@ -106,7 +110,9 @@ class EW50EAlarmCountSensor(_Base):
         result: dict[str, Any] = {}
         for i, alarm in enumerate(alarms):
             gid = str(alarm.get("group", ""))
-            name = self.coordinator.group_names.get(gid, f"Gruppo {gid}" if gid else "Sistema")
+            name = self.coordinator.group_names.get(
+                gid, f"Gruppo {gid}" if gid else "Sistema"
+            )
             result[f"allarme_{i + 1}"] = {
                 "gruppo": gid,
                 "nome": name,
@@ -123,7 +129,13 @@ class EW50EAlarmCountSensor(_Base):
 
 
 class _GroupBase(_Base):
-    def __init__(self, coordinator, entry, group_id, group_name):
+    def __init__(
+        self,
+        coordinator: EW50ECoordinator,
+        entry: ConfigEntry,
+        group_id: str,
+        group_name: str,
+    ) -> None:
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
@@ -133,7 +145,13 @@ class _GroupBase(_Base):
 
 
 class EW50EGroupStatusSensor(_GroupBase):
-    def __init__(self, coordinator, entry, group_id, group_name):
+    def __init__(
+        self,
+        coordinator: EW50ECoordinator,
+        entry: ConfigEntry,
+        group_id: str,
+        group_name: str,
+    ) -> None:
         super().__init__(coordinator, entry, group_id, group_name)
         self._attr_unique_id = f"ew50e_group_{group_id}_status"
         self._attr_name = f"{group_name} - Stato"
@@ -141,9 +159,10 @@ class EW50EGroupStatusSensor(_GroupBase):
     @property
     def native_value(self) -> str:
         g = self._group_data()
-        if g.get("errorsign") == "ON":
+        err_sign = (g.get("errorsign") or "").upper()
+        if err_sign in ("ON", "1"):
             return "ERRORE"
-        drive = g.get("drive", "")
+        drive = (g.get("drive") or "").upper()
         if drive == "ON":
             mode = g.get("mode", "")
             return f"ON - {mode}" if mode else "ON"
@@ -155,7 +174,9 @@ class EW50EGroupStatusSensor(_GroupBase):
     def extra_state_attributes(self) -> dict[str, Any]:
         g = self._group_data()
         alarms = self.coordinator.data.get("alarms", [])
-        group_alarms = [a for a in alarms if str(a.get("group", "")) == self._group_id]
+        group_alarms = [
+            a for a in alarms if str(a.get("group", "")) == self._group_id
+        ]
         return {
             "gruppo_id": self._group_id,
             "drive": g.get("drive", ""),
@@ -163,6 +184,7 @@ class EW50EGroupStatusSensor(_GroupBase):
             "velocita_fan": g.get("fanspeed", ""),
             "direzione_aria": g.get("airdirection", ""),
             "errore": g.get("errorsign", "OFF"),
+            "segnalazione_filtro": g.get("filtersign", "OFF"),
             "codice_errore": g.get("errorcode", ""),
             "allarmi_attivi": group_alarms,
         }

@@ -1,7 +1,17 @@
+<p align="center">
+  <img src="assets/hacs_banner.png" alt="Mitsubishi EW-50E / EW-C50E — Home Assistant Integration" width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/hacs/integration"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge" alt="HACS Custom"></a>
+  <a href="https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E/releases"><img src="https://img.shields.io/github/v/release/gabrio79/Mitsubishi-EW-50E-EW-C50E?style=for-the-badge&color=03A9F4" alt="Release"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-2026.3%2B-18BCF2.svg?style=for-the-badge&logo=home-assistant" alt="Home Assistant 2026.3+">
+</p>
+
 # Mitsubishi EW-50E / EW-C50E — Integrazione Home Assistant
 
 Integrazione **custom** (HACS) per i controller centralizzati **Mitsubishi Electric EW-50E / EW-C50E**.
-Comunica in locale via **WebSocket + XML** (`local_push`) e monitora **stati e anomalie** dell'impianto VRF/M-NET.
+Comunica in locale via **WebSocket + XML** (`local_polling` / 30 s) e monitora **stati e anomalie** dell'impianto VRF/M-NET.
 
 > ℹ️ **Versione semplificata (1.15+)**: l'integrazione si concentra su **stati di funzionamento e allarmi/anomalie**.
 > Non vengono più create entità di temperatura o setpoint — quei dati non vengono più letti né dal device né esposti.
@@ -10,11 +20,12 @@ Comunica in locale via **WebSocket + XML** (`local_push`) e monitora **stati e a
 
 ## ✨ Funzionalità
 
-- 🔌 Connessione **100% locale** (nessun cloud) via WebSocket sicuro (`wss://`)
-- 🔎 **Auto-discovery** dei gruppi attivi, con nomi leggibili
-- 🚦 Stato di ogni zona/gruppo (ON/OFF, modalità, errore)
-- 🛡️ Allarmi di **sistema**, **per gruppo** e **perdita gas refrigerante**
+- 🔌 Connessione **100% locale** (nessun cloud) via WebSocket sicuro (`wss://` con subprotocollo `b_xmlproc`)
+- 🔎 **Auto-discovery** dei gruppi attivi e dei nomi (`GroupNameWeb` via `ControlGroup/MnetList`)
+- 🚦 Stato di ogni zona/gruppo (`ON - <modalità>`, `OFF`, `ERRORE`)
+- 🛡️ Allarmi di **sistema**, **per gruppo** (`AlarmCode`) e **perdita gas refrigerante**
 - 🔢 Conteggio degli allarmi attivi
+- 🎨 **Icone e loghi nativi integrati** (`custom_components/ew50e/brand/` con supporto Light/Dark mode e HiDPI `@2x`)
 - 📲 Package pronto per **notifiche Telegram** su anomalia/rientro/offline
 - 📊 Dashboard Lovelace pronta all'uso (Mushroom + auto-entities)
 
@@ -23,8 +34,12 @@ Comunica in locale via **WebSocket + XML** (`local_push`) e monitora **stati e a
 ## 📦 Installazione
 
 ### Via HACS (consigliato)
+
+[![Apri il repository su HACS nella tua istanza Home Assistant](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=gabrio79&repository=Mitsubishi-EW-50E-EW-C50E&category=integration)
+
+Oppure manualmente da HACS:
 1. HACS → **Integrazioni** → menu ⋮ → **Repository personalizzati**
-2. Aggiungi `https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E` come categoria **Integration**
+2. Aggiungi `https://github.com/gabrio79/Mitsubishi-EW-50E-EW-C50E` come categoria **Integrazione** (`Integration`)
 3. Installa **Mitsubishi EW-50E / EW-C50E** e **riavvia** Home Assistant
 
 ### Manuale
@@ -114,21 +129,19 @@ Il sistema usa messaggi XML su WebSocket con tre tipi di comando:
 | `notifyRequest` | Server → Client | Aggiornamento spontaneo (es. cambio stato/allarme) |
 
 ### Auto-discovery gruppi
-All'avvio l'integrazione **ascolta i `notifyRequest` iniziali** del controller per individuare i gruppi attivi, quindi unisce il risultato con la lista nota `KNOWN_GROUP_NAMES` (gruppi 1–17) definita in `__init__.py`. I nomi noti vengono usati per etichettare le entità; per gli eventuali gruppi non mappati si usa `Gruppo <id>`.
-
-> Per modificare le etichette delle zone, aggiorna il dizionario `KNOWN_GROUP_NAMES` in `__init__.py`.
+All'avvio l'integrazione interroga `<ControlGroup><MnetList /></ControlGroup>` per leggere i gruppi configurati e i rispettivi nomi web (`GroupNameWeb`), utilizzando il dizionario `KNOWN_GROUP_NAMES` in `__init__.py` come fallback qualora un gruppo non abbia etichetta impostata sul controller.
 
 ### Lettura dati
-Ad ogni ciclo (ogni 30 s) viene richiesto lo stato di ciascun gruppo più gli allarmi:
+Ad ogni ciclo (ogni 30 s) viene richiesto in batch lo stato dei gruppi più gli allarmi (`AlarmStatusList` e `SystemAlarm`):
 ```xml
 <Packet>
   <Command>getRequest</Command>
   <DatabaseManager>
-    <Mnet Group="1" Attribute="All"/>
+    <Mnet Group="1" Drive="*" Mode="*" AirDirection="*" FanSpeed="*" ErrorSign="*" FilterSign="*" />
   </DatabaseManager>
 </Packet>
 ```
-Vengono letti gli attributi di **stato/anomalia** (`Drive`, `Mode`, `FanSpeed`, `AirDirection`, `ErrorSign`, `ErrorCode`, `GroupName`); `SetTemp`/`InletTemp`/`OATemp` vengono ignorati.
+Vengono letti esclusivamente gli attributi di **stato/anomalia** (`Drive`, `Mode`, `FanSpeed`, `AirDirection`, `ErrorSign`, `FilterSign`, `AlarmCode`); `SetTemp`/`InletTemp`/`OATemp` non vengono richiesti.
 
 ### Allarmi
 Gli allarmi sono disponibili tramite tre meccanismi:

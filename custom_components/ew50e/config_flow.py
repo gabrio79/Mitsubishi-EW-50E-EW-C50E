@@ -1,8 +1,7 @@
+"""Config Flow per l'integrazione Mitsubishi EW-50E / EW-C50E."""
 from __future__ import annotations
 
-import asyncio
 import logging
-import ssl
 from typing import Any
 
 import aiohttp
@@ -12,7 +11,8 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResult
 
-DOMAIN = "ew50e"
+from . import DOMAIN, EW50EAuthError, EW50EClient
+
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
@@ -25,53 +25,28 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 async def _test_connection(host: str, username: str, password: str) -> str | None:
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-    connector = aiohttp.TCPConnector(ssl=ssl_ctx)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        try:
-            url = f"https://{host}/control/login"
-            params = {"loginId": username, "password": password}
-            async with asyncio.timeout(10):
-                async with session.get(url, params=params, allow_redirects=True) as resp:
-                    _LOGGER.debug("EW-50E login status: %s", resp.status)
-                    raw = await resp.text()
-                    _LOGGER.debug("EW-50E login body: %s", raw[:200])
-                    token = None
-                    for name in ["token", "Token", "SESSION"]:
-                        c = resp.cookies.get(name)
-                        if c:
-                            token = c.value
-                            break
-                    if not token and "token=" in str(resp.url):
-                        token = str(resp.url).split("token=")[-1].split("&")[0]
-                    if not token:
-                        try:
-                            import json
-                            data = json.loads(raw)
-                            token = data.get("token") or data.get("Token")
-                        except Exception:
-                            pass
-                    if not token:
-                        _LOGGER.warning("EW-50E: token non trovato, procedo senza")
-        except aiohttp.ClientConnectorError:
-            return "cannot_connect"
-        except Exception as err:
-            _LOGGER.exception("Errore login EW-50E: %s", err)
-            return "cannot_connect"
-        try:
-            ws_url = f"wss://{host}/b_xmlproc/?token={token}" if token else f"wss://{host}/b_xmlproc/"
-            async with asyncio.timeout(8):
-                ws = await session.ws_connect(ws_url, ssl=ssl_ctx, heartbeat=5)
-                await ws.close()
-                return None
-        except Exception as err:
-            _LOGGER.warning("EW-50E WebSocket fallito: %s - accetto comunque", err)
-            return None
+    """Verifica la connessione e le credenziali sull'EW-50E senza bloccare l'event loop."""
+    client = EW50EClient(host, username, password)
+    try:
+        await client.connect()
+        return None
+    except EW50EAuthError:
+        return "invalid_auth"
+    except (aiohttp.ClientError, TimeoutError):
+        return "cannot_connect"
+    except ValueError as err:
+        _LOGGER.warning("EW-50E login rifiutato su %s: %s", host, err)
+        return "invalid_auth"
+    except Exception as err:
+        _LOGGER.exception("Errore imprevisto durante test connessione EW-50E: %s", err)
+        return "cannot_connect"
+    finally:
+        await client.disconnect()
 
 
 class EW50EConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Gestisce il flusso di configurazione UI per Mitsubishi EW-50E."""
+
     VERSION = 1
 
     async def async_step_user(
@@ -79,19 +54,24 @@ class EW50EConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            error = await _test_connection(
-                user_input[CONF_HOST],
-                user_input[CONF_USERNAME],
-                user_input[CONF_PASSWORD],
-            )
+            host = user_input[CONF_HOST].strip()
+            username = user_input[CONF_USERNAME].strip()
+            password = user_input[CONF_PASSWORD]
+
+            await self.async_set_unique_id(host)
+            self._abort_if_unique_id_configured()
+
+            error = await _test_connection(host, username, password)
             if error:
                 errors["base"] = error
             else:
-                await self.async_set_unique_id(user_input[CONF_HOST])
-                self._abort_if_unique_id_configured()
                 return self.async_create_entry(
-                    title=f"EW-50E ({user_input[CONF_HOST]})",
-                    data=user_input,
+                    title=f"EW-50E ({host})",
+                    data={
+                        CONF_HOST: host,
+                        CONF_USERNAME: username,
+                        CONF_PASSWORD: password,
+                    },
                 )
         return self.async_show_form(
             step_id="user",

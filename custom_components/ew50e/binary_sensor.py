@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -23,14 +24,18 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Configura i binary sensor per l'EW-50E."""
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[BinarySensorEntity] = []
-    entities.append(EW50ESystemAlarmBinarySensor(coordinator, entry))
-    entities.append(EW50ERefLeakBinarySensor(coordinator, entry))
+    entities: list[BinarySensorEntity] = [
+        EW50ESystemAlarmBinarySensor(coordinator, entry),
+        EW50ERefLeakBinarySensor(coordinator, entry),
+    ]
 
     for group_id, group_name in coordinator.group_names.items():
-        entities.append(EW50EGroupAlarmBinarySensor(coordinator, entry, group_id, group_name))
+        entities.append(
+            EW50EGroupAlarmBinarySensor(coordinator, entry, group_id, group_name)
+        )
 
     async_add_entities(entities)
 
@@ -41,10 +46,11 @@ def _device_info(entry: ConfigEntry) -> DeviceInfo:
         name="EW-50E Mitsubishi",
         manufacturer="Mitsubishi Electric",
         model="EW-C50E",
+        configuration_url=f"https://{entry.data['host']}/control/",
     )
 
 
-class _Base(CoordinatorEntity, BinarySensorEntity):
+class _Base(CoordinatorEntity[EW50ECoordinator], BinarySensorEntity):
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
@@ -67,7 +73,7 @@ class EW50ESystemAlarmBinarySensor(_Base):
         return len(alarms) > 0 or sys_alarm.get("alert") == "ON"
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         alarms = self.coordinator.data.get("alarms", [])
         sys_alarm = self.coordinator.data.get("system_alarm", {})
         return {
@@ -75,7 +81,7 @@ class EW50ESystemAlarmBinarySensor(_Base):
             "alert_sistema": sys_alarm.get("alert", "OFF"),
             "codice_errore_sistema": sys_alarm.get("error_code", "0000"),
             "livello_alert": sys_alarm.get("alert_level", "0"),
-            "stato_mnet": self.coordinator.data.get("mnet_status", "UNKNOWN"),
+            "stato_mnet": self.coordinator.data.get("mnet_status", "NORMAL"),
         }
 
     @property
@@ -98,7 +104,13 @@ class EW50ERefLeakBinarySensor(_Base):
 class EW50EGroupAlarmBinarySensor(_Base):
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
-    def __init__(self, coordinator, entry, group_id, group_name):
+    def __init__(
+        self,
+        coordinator: EW50ECoordinator,
+        entry: ConfigEntry,
+        group_id: str,
+        group_name: str,
+    ) -> None:
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
@@ -109,17 +121,19 @@ class EW50EGroupAlarmBinarySensor(_Base):
     def is_on(self) -> bool:
         groups = self.coordinator.data.get("groups", {})
         group = groups.get(self._group_id, {})
-        if group.get("errorsign") == "ON":
+        if (group.get("errorsign") or "").upper() in ("ON", "1"):
             return True
         alarms = self.coordinator.data.get("alarms", [])
         return any(str(a.get("group", "")) == self._group_id for a in alarms)
 
     @property
-    def extra_state_attributes(self) -> dict:
+    def extra_state_attributes(self) -> dict[str, Any]:
         groups = self.coordinator.data.get("groups", {})
         group = groups.get(self._group_id, {})
         alarms = self.coordinator.data.get("alarms", [])
-        group_alarms = [a for a in alarms if str(a.get("group", "")) == self._group_id]
+        group_alarms = [
+            a for a in alarms if str(a.get("group", "")) == self._group_id
+        ]
         return {
             "gruppo_id": self._group_id,
             "nome": self._group_name,
