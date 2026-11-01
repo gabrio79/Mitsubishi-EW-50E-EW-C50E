@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hacs_banner.png" alt="Mitsubishi EW-50E / EW-C50E — Home Assistant Integration" width="100%">
+  <img src="https://raw.githubusercontent.com/gabrio79/Mitsubishi-EW-50E-EW-C50E/main/assets/hacs_banner.png" alt="Mitsubishi EW-50E / EW-C50E — Home Assistant Integration" width="100%">
 </p>
 
 <p align="center">
@@ -56,9 +56,11 @@ Copia la cartella dell'integrazione in `config/custom_components/ew50e/` e riavv
 
 ---
 
-## 🧩 Entità create
+## 🧩 Dispositivi ed Entità create
 
-### Sistema
+L'integrazione organizza l'impianto in modo ordinato creando **1 dispositivo centrale (`EW50E`)** per la diagnostica globale + **1 dispositivo dedicato per ciascuna zona M-NET** (collegato via `via_device`), mantenendo gli `entity_id` puliti senza prefissi superflui di area o hub:
+
+### Dispositivo Centrale (`EW50E`)
 | Entità | Tipo | Descrizione |
 |--------|------|-------------|
 | `sensor.ew50e_stato_sistema` | sensor | Stato globale (`NORMALE` / `ALLARME` / stato M-NET) |
@@ -66,13 +68,13 @@ Copia la cartella dell'integrazione in `config/custom_components/ew50e/` e riavv
 | `binary_sensor.ew50e_anomalia_sistema` | binary (problem) | Anomalia di sistema o allarmi presenti |
 | `binary_sensor.ew50e_perdita_gas_refrigerante` | binary (gas) | Allarme perdita refrigerante |
 
-### Per ogni gruppo/zona
+### Dispositivo per singola Zona (es. `Studio 2 - Savernini`, `Farmacia - Bancone`, …)
 | Entità | Tipo | Descrizione |
 |--------|------|-------------|
-| `sensor.<zona>_stato` | sensor | `ON - <modalità>` / `OFF` / `ERRORE` (espone l'attributo `gruppo_id`) |
-| `binary_sensor.<zona>_anomalia` | binary (problem) | Errore o allarme della zona (espone l'attributo `gruppo_id`) |
+| `sensor.<zona>_stato` | sensor | `ON - <modalità>` / `OFF` / `ERRORE` (espone `gruppo_id`, `macro_zona`, `nome_breve`, `segnalazione_filtro`) |
+| `binary_sensor.<zona>_anomalia` | binary (problem) | Errore o allarme della zona (espone `gruppo_id`, `macro_zona`, `nome`, `codice_errore`) |
 
-> Le zone si auto-rilevano: gli attributi `gruppo_id` permettono a package e dashboard di trovarle senza cablare i nomi a mano.
+> Le zone si auto-rilevano: gli attributi `gruppo_id`, `macro_zona` e `nome_breve` permettono a package e dashboard di raggrupparle automaticamente senza cablare i nomi a mano.
 
 ---
 
@@ -97,7 +99,7 @@ poi copia il file in `<config>/packages/` e riavvia. Assicurati di sostituire `n
 
 ## 📊 Dashboard Lovelace
 
-Il file [`dashboards/ew50e.yaml`](dashboards/ew50e.yaml) fornisce una vista con banner di stato, riepilogo a chip, elenco anomalie attive e stato di tutte le zone.
+Il file [`dashboards/ew50e.yaml`](dashboards/ew50e.yaml) fornisce una vista organizzata con banner di stato, riepilogo a chip, card **Anomalie attive** in cima (visibile solo in caso di guasto) e **4 card separate per Macro-Zona** (*Farmacia*, *Studi*, *Casa*, *Bilocale*).
 
 **Componenti HACS (Frontend) richiesti:** [Mushroom](https://github.com/piitaya/lovelace-mushroom) e [auto-entities](https://github.com/thomasloven/lovelace-auto-entities).
 

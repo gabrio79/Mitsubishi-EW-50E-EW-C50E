@@ -1,6 +1,7 @@
 """Sensori per EW-50E Mitsubishi Electric.
 
 Versione semplificata: solo stati e anomalie (niente temperature/setpoint).
+Ogni zona M-NET è associata al proprio sotto-dispositivo dedicato.
 """
 from __future__ import annotations
 
@@ -13,11 +14,16 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import DOMAIN, EW50ECoordinator
+from . import (
+    DOMAIN,
+    EW50ECoordinator,
+    hub_device_info,
+    parse_zone_metadata,
+    zone_device_info,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,7 +33,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Configura i sensori per l'EW-50E."""
+    """Configura i sensori di sistema e di zona per l'EW-50E."""
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = [
@@ -43,21 +49,13 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.data["host"])},
-        name="EW-50E Mitsubishi",
-        manufacturer="Mitsubishi Electric",
-        model="EW-C50E",
-        configuration_url=f"https://{entry.data['host']}/control/",
-    )
-
-
 class _Base(CoordinatorEntity[EW50ECoordinator], SensorEntity):
+    _attr_has_entity_name = True
+
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_device_info = _device_info(entry)
+        self._attr_device_info = hub_device_info(entry.data["host"])
 
     @property
     def available(self) -> bool:
@@ -65,7 +63,7 @@ class _Base(CoordinatorEntity[EW50ECoordinator], SensorEntity):
 
 
 class EW50ESystemAlarmSensor(_Base):
-    _attr_name = "EW50E Stato Sistema"
+    _attr_name = "Stato Sistema"
     _attr_unique_id = "ew50e_system_alarm"
 
     @property
@@ -96,7 +94,7 @@ class EW50ESystemAlarmSensor(_Base):
 
 
 class EW50EAlarmCountSensor(_Base):
-    _attr_name = "EW50E Allarmi Attivi"
+    _attr_name = "Allarmi Attivi"
     _attr_unique_id = "ew50e_alarm_count"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -139,6 +137,10 @@ class _GroupBase(_Base):
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
+        self._macro_zona, self._nome_breve = parse_zone_metadata(group_name)
+        self._attr_device_info = zone_device_info(
+            entry.data["host"], group_id, group_name
+        )
 
     def _group_data(self) -> dict[str, Any]:
         return self.coordinator.data.get("groups", {}).get(self._group_id, {})
@@ -154,7 +156,7 @@ class EW50EGroupStatusSensor(_GroupBase):
     ) -> None:
         super().__init__(coordinator, entry, group_id, group_name)
         self._attr_unique_id = f"ew50e_group_{group_id}_status"
-        self._attr_name = f"{group_name} - Stato"
+        self._attr_name = "Stato"
 
     @property
     def native_value(self) -> str:
@@ -179,6 +181,9 @@ class EW50EGroupStatusSensor(_GroupBase):
         ]
         return {
             "gruppo_id": self._group_id,
+            "nome": self._group_name,
+            "nome_breve": self._nome_breve,
+            "macro_zona": self._macro_zona,
             "drive": g.get("drive", ""),
             "modalita": g.get("mode", ""),
             "velocita_fan": g.get("fanspeed", ""),

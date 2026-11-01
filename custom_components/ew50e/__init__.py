@@ -18,7 +18,10 @@ import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import slugify
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "ew50e"
@@ -88,6 +91,136 @@ def _make_ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+def parse_zone_metadata(group_name: str) -> tuple[str, str]:
+    """Estrae (macro_zona, nome_breve) dal nome completo del gruppo EW-50E."""
+    clean = group_name.strip()
+    low = clean.lower()
+    if low.startswith("farmacia") and "-" in clean:
+        return "Farmacia", clean.split("-", 1)[1].strip()
+    if low.startswith("casa") and "-" in clean:
+        return "Casa", clean.split("-", 1)[1].strip()
+    if low.startswith("bilocale") and "-" in clean:
+        return "Bilocale", clean.split("-", 1)[1].strip()
+    if (low.startswith("studi ") or low.startswith("studi-")) and "-" in clean:
+        return "Studi", clean.split("-", 1)[1].strip()
+    if low.startswith(("studio", "studi")):
+        return "Studi", clean
+    if "-" in clean:
+        parts = clean.split("-", 1)
+        return parts[0].strip(), parts[1].strip()
+    return "Altro", clean
+
+
+def hub_device_info(host: str) -> DeviceInfo:
+    """DeviceInfo del controller centrale EW-50E (contiene solo le 4 entità globali)."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, host)},
+        name="EW50E",
+        manufacturer="Mitsubishi Electric",
+        model="EW-50E / EW-C50E (Controller Centrale)",
+        configuration_url=f"https://{host}/control/",
+    )
+
+
+def zone_device_info(host: str, group_id: str, group_name: str) -> DeviceInfo:
+    """DeviceInfo dedicato per singola zona M-NET (contiene Stato e Anomalia della zona)."""
+    macro_zona, _ = parse_zone_metadata(group_name)
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{host}_group_{group_id}")},
+        via_device=(DOMAIN, host),
+        name=group_name,
+        manufacturer="Mitsubishi Electric",
+        model=f"Zona M-NET #{group_id} ({macro_zona})",
+        configuration_url=f"https://{host}/control/",
+    )
+
+
+def _build_canonical_entity_ids(group_names: dict[str, str]) -> dict[str, str]:
+    """Mappa unique_id -> entity_id pulito (senza prefissi di Area o nome Hub)."""
+    mapping: dict[str, str] = {
+        "ew50e_system_alarm": "sensor.ew50e_stato_sistema",
+        "ew50e_alarm_count": "sensor.ew50e_allarmi_attivi",
+        "ew50e_system_problem": "binary_sensor.ew50e_anomalia_sistema",
+        "ew50e_ref_leak": "binary_sensor.ew50e_perdita_gas_refrigerante",
+    }
+    for gid, gname in group_names.items():
+        slug = slugify(gname) or f"gruppo_{gid}"
+        mapping[f"ew50e_group_{gid}_status"] = f"sensor.{slug}_stato"
+        mapping[f"ew50e_group_{gid}_alarm"] = f"binary_sensor.{slug}_anomalia"
+    return mapping
+
+
+async def _async_prepare_devices_and_migrate(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: EW50ECoordinator
+) -> None:
+    """Assicura i dispositivi per zona e migra eventuali entità preesistenti dal vecchio hub unico."""
+    host = entry.data[CONF_HOST]
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
+    hub_dev = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, host)},
+        name="EW50E",
+        manufacturer="Mitsubishi Electric",
+        model="EW-50E / EW-C50E (Controller Centrale)",
+        configuration_url=f"https://{host}/control/",
+    )
+    if hub_dev.name == "EW-50E Mitsubishi" and hub_dev.name_by_user is None:
+        dev_reg.async_update_device(hub_dev.id, name="EW50E")
+
+    zone_dev_ids: dict[str, str] = {}
+    for gid, gname in coordinator.group_names.items():
+        macro_zona, _ = parse_zone_metadata(gname)
+        zdev = dev_reg.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, f"{host}_group_{gid}")},
+            via_device=(DOMAIN, host),
+            name=gname,
+            manufacturer="Mitsubishi Electric",
+            model=f"Zona M-NET #{gid} ({macro_zona})",
+            configuration_url=f"https://{host}/control/",
+        )
+        zone_dev_ids[gid] = zdev.id
+
+    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        uid = reg_entry.unique_id or ""
+        if uid.startswith("ew50e_group_"):
+            parts = uid.split("_")
+            # Formato: ew50e_group_<gid>_status | ew50e_group_<gid>_alarm
+            if len(parts) >= 4:
+                gid = parts[2]
+                target_dev_id = zone_dev_ids.get(gid)
+                if target_dev_id and reg_entry.device_id != target_dev_id:
+                    ent_reg.async_update_entity(reg_entry.entity_id, device_id=target_dev_id)
+
+
+async def _async_normalize_entity_ids(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: EW50ECoordinator
+) -> None:
+    """Rimuove prefissi indesiderati (es. area 'cortile_ew_50e_mitsubishi_') dagli entity_id."""
+    ent_reg = er.async_get(hass)
+    canonical = _build_canonical_entity_ids(coordinator.group_names)
+
+    for reg_entry in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        target_id = canonical.get(reg_entry.unique_id or "")
+        if target_id and reg_entry.entity_id != target_id:
+            try:
+                ent_reg.async_update_entity(reg_entry.entity_id, new_entity_id=target_id)
+                _LOGGER.info(
+                    "EW-50E: entity_id normalizzato %s -> %s",
+                    reg_entry.entity_id,
+                    target_id,
+                )
+            except ValueError as err:
+                _LOGGER.debug(
+                    "EW-50E: impossibile rinominare %s in %s (%s)",
+                    reg_entry.entity_id,
+                    target_id,
+                    err,
+                )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configura l'integrazione EW-50E da una ConfigEntry."""
     client = EW50EClient(
@@ -98,7 +231,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = EW50ECoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+
+    await _async_prepare_devices_and_migrate(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await _async_normalize_entity_ids(hass, entry, coordinator)
     return True
 
 

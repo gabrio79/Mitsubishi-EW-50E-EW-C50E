@@ -3,6 +3,16 @@
 Tutte le modifiche rilevanti a questo progetto sono documentate in questo file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [2.1.0] - 2026-11-01
+
+### Added
+- **Architettura Multi-Dispositivo per Zona (18 Dispositivi):** separato il controller centrale (`EW50E`, con le sole 4 entità globali) dai **17 sotto-dispositivi di zona** (collegati via `via_device`), ciascuno contenente esclusivamente i propri 2 sensori (`Stato` e `Anomalia`).
+- **Migrazione & Pulizia Automatica `entity_id`:** aggiunto in `__init__.py` il riallineamento automatico del `DeviceRegistry` e dell'`EntityRegistry` all'avvio che rimuove prefissi indesiderati di area/hub (es. `cortile_ew_50e_mitsubishi_`) garantendo ID puliti (`sensor.studio_2_savernini_stato`, `binary_sensor.studio_2_savernini_anomalia`, ecc.) senza dover eliminare e ri-aggiungere l'integrazione.
+- **Dashboard Lovelace divisa per Macro-Zona (`dashboards/ew50e.yaml`):** sostituito l'elenco piatto con card **Anomalie attive** in cima + **4 card dedicate per Macro-Zona** (*Farmacia*, *Studi*, *Casa*, *Bilocale*) alimentate dagli attributi `macro_zona` e `nome_breve`.
+- Aggiunti `dark_icon.png` e `dark_icon@2x.png` in `custom_components/ew50e/brand/` e URL assoluto `raw.githubusercontent.com` per il banner HACS in `README.md`.
+
+---
+
 ## [2.0.0] - 2026-11-01
 
 ### Added

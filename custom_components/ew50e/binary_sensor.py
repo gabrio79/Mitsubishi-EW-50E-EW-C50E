@@ -1,4 +1,4 @@
-"""Binary sensor per EW-50E — allarmi e anomalie, gruppi scoperti dinamicamente."""
+"""Binary sensor per EW-50E — allarmi e anomalie di sistema e per singola zona."""
 from __future__ import annotations
 
 import logging
@@ -10,11 +10,16 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import DOMAIN, EW50ECoordinator
+from . import (
+    DOMAIN,
+    EW50ECoordinator,
+    hub_device_info,
+    parse_zone_metadata,
+    zone_device_info,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +29,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Configura i binary sensor per l'EW-50E."""
+    """Configura i binary sensor di sistema e di zona per l'EW-50E."""
     coordinator: EW50ECoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[BinarySensorEntity] = [
@@ -40,21 +45,13 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _device_info(entry: ConfigEntry) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, entry.data["host"])},
-        name="EW-50E Mitsubishi",
-        manufacturer="Mitsubishi Electric",
-        model="EW-C50E",
-        configuration_url=f"https://{entry.data['host']}/control/",
-    )
-
-
 class _Base(CoordinatorEntity[EW50ECoordinator], BinarySensorEntity):
+    _attr_has_entity_name = True
+
     def __init__(self, coordinator: EW50ECoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_device_info = _device_info(entry)
+        self._attr_device_info = hub_device_info(entry.data["host"])
 
     @property
     def available(self) -> bool:
@@ -62,7 +59,7 @@ class _Base(CoordinatorEntity[EW50ECoordinator], BinarySensorEntity):
 
 
 class EW50ESystemAlarmBinarySensor(_Base):
-    _attr_name = "EW50E Anomalia Sistema"
+    _attr_name = "Anomalia Sistema"
     _attr_unique_id = "ew50e_system_problem"
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
@@ -90,7 +87,7 @@ class EW50ESystemAlarmBinarySensor(_Base):
 
 
 class EW50ERefLeakBinarySensor(_Base):
-    _attr_name = "EW50E Perdita Gas Refrigerante"
+    _attr_name = "Perdita Gas Refrigerante"
     _attr_unique_id = "ew50e_ref_leak"
     _attr_device_class = BinarySensorDeviceClass.GAS
     _attr_icon = "mdi:molecule"
@@ -114,8 +111,12 @@ class EW50EGroupAlarmBinarySensor(_Base):
         super().__init__(coordinator, entry)
         self._group_id = group_id
         self._group_name = group_name
+        self._macro_zona, self._nome_breve = parse_zone_metadata(group_name)
+        self._attr_device_info = zone_device_info(
+            entry.data["host"], group_id, group_name
+        )
         self._attr_unique_id = f"ew50e_group_{group_id}_alarm"
-        self._attr_name = f"{group_name} - Anomalia"
+        self._attr_name = "Anomalia"
 
     @property
     def is_on(self) -> bool:
@@ -137,6 +138,8 @@ class EW50EGroupAlarmBinarySensor(_Base):
         return {
             "gruppo_id": self._group_id,
             "nome": self._group_name,
+            "nome_breve": self._nome_breve,
+            "macro_zona": self._macro_zona,
             "error_sign": group.get("errorsign", "OFF"),
             "codice_errore": group.get("errorcode", ""),
             "dettaglio_allarmi": group_alarms,
