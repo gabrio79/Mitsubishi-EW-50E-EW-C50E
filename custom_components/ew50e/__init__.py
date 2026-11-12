@@ -175,7 +175,7 @@ async def _async_prepare_devices_and_migrate(
         zdev = dev_reg.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={(DOMAIN, f"{host}_group_{gid}")},
-            via_device=(DOMAIN, host),
+            via_device_id=hub_dev.id,
             name=gname,
             manufacturer="Mitsubishi Electric",
             model=f"Zona M-NET #{gid} ({macro_zona})",

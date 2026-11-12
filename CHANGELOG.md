@@ -3,6 +3,16 @@
 Tutte le modifiche rilevanti a questo progetto sono documentate in questo file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [2.1.1] - 2026-11-12
+
+### Changed
+- **Dashboard Lovelace Sections (`dashboards/ew50e.yaml`):** convertita la vista nel formato moderno `type: sections` (`max_columns: 4`, `title: Mitsubishi`, `path: mitsubishi`) con fascia superiore a 4 colonne per stato globale/anomalie attive e 4 colonne affiancate per *Farmacia*, *Studi*, *Casa* e *Bilocale + Diagnostica*.
+
+### Fixed
+- **Deprecazione `device_registry.async_get_or_create` (`__init__.py`):** sostituito il parametro deprecato `via_device=(DOMAIN, host)` con `via_device_id=hub_dev.id` in `_async_prepare_devices_and_migrate`.
+
+---
+
 ## [2.1.0] - 2026-11-01
 
 ### Added

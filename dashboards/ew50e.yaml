@@ -1,231 +1,250 @@
 # =============================================================================
-#  EW-50E Mitsubishi - Dashboard Lovelace (raggruppata per Macro-Zona)
+#  EW-50E Mitsubishi - Vista Lovelace moderna "Sections" (4 colonne)
 # =============================================================================
 #  Componenti HACS richiesti (Frontend):
 #    - Mushroom            (custom:mushroom-*)
 #    - auto-entities       (custom:auto-entities)
 #
-#  Come usarlo:
-#  A) Dashboard YAML dedicata in configuration.yaml:
-#       lovelace:
-#         dashboards:
-#           ew50e-dashboard:
-#             mode: yaml
-#             title: Clima EW-50E
-#             icon: mdi:air-conditioner
-#             show_in_sidebar: true
-#             filename: dashboards/ew50e.yaml
-#  B) Oppure: nuova dashboard dall'interfaccia -> "Modifica" -> menu (⋮) ->
-#     "Editor di codice" -> incolla il contenuto a partire da "views:".
+#  Come incollarla nella tua Dashboard esistente:
+#    - Se la incolli nell'Editor di configurazione generale (sotto "views:"):
+#      copia a partire da "  - type: sections" fino in fondo.
+#    - Se invece crei una nuova Vista e clicchi "Modifica in YAML" della sola vista:
+#      copia da "type: sections" (senza il trattino iniziale "-").
 # =============================================================================
 
 title: Clima EW-50E
 views:
-  - title: Stato Impianto
-    path: ew50e
+  - type: sections
+    max_columns: 4
+    title: Mitsubishi
+    path: mitsubishi
     icon: mdi:air-conditioner
-    cards:
-      # ---- 1. Banner stato globale ------------------------------------------
-      - type: custom:mushroom-template-card
-        primary: >-
-          {{ 'ANOMALIA RILEVATA' if is_state('binary_sensor.ew50e_problema_globale', 'on')
-             else 'Tutto regolare' }}
-        secondary: >-
-          {% if is_state('binary_sensor.ew50e_problema_globale', 'on') %}
-            {{ states('sensor.ew50e_problemi_totali') }} problema/i attivo/i
-          {% else %}
-            Nessuna anomalia attiva sull'impianto VRF
-          {% endif %}
-        icon: >-
-          {{ 'mdi:shield-alert' if is_state('binary_sensor.ew50e_problema_globale', 'on')
-             else 'mdi:shield-check' }}
-        icon_color: >-
-          {{ 'red' if is_state('binary_sensor.ew50e_problema_globale', 'on') else 'green' }}
-        layout: horizontal
-        fill_container: true
-        tap_action:
-          action: none
+    badges:
+      - type: entity
+        entity: sensor.ew50e_stato_sistema
+        name: Sistema
+        icon: mdi:hvac
+      - type: entity
+        entity: sensor.ew50e_problemi_totali
+        name: Problemi
+        icon: mdi:alert-circle-outline
+      - type: entity
+        entity: sensor.ew50e_allarmi_attivi
+        name: Allarmi M-NET
+        icon: mdi:bell-alert-outline
+      - type: entity
+        entity: binary_sensor.ew50e_perdita_gas_refrigerante
+        name: Gas
+        icon: mdi:molecule
+    sections:
+      # =======================================================================
+      # FASCIA SUPERIORE A TUTTA LARGHEZZA (4 colonne): Stato + Anomalie attive
+      # =======================================================================
+      - type: grid
+        column_span: 4
+        cards:
+          - type: custom:mushroom-template-card
+            primary: >-
+              {{ 'ANOMALIA RILEVATA' if is_state('binary_sensor.ew50e_problema_globale', 'on')
+                 else 'Impianto Mitsubishi VRF Regolare' }}
+            secondary: >-
+              {% if is_state('binary_sensor.ew50e_problema_globale', 'on') %}
+                {{ states('sensor.ew50e_problemi_totali') }} problema/i attivo/i sull'impianto
+              {% else %}
+                Nessuna anomalia di sistema o di zona attiva
+              {% endif %}
+            icon: >-
+              {{ 'mdi:shield-alert' if is_state('binary_sensor.ew50e_problema_globale', 'on')
+                 else 'mdi:shield-check' }}
+            icon_color: >-
+              {{ 'red' if is_state('binary_sensor.ew50e_problema_globale', 'on') else 'green' }}
+            layout: horizontal
+            fill_container: true
+            tap_action:
+              action: none
+            grid_options:
+              columns: full
 
-      # ---- 2. Riepilogo rapido (chips) --------------------------------------
-      - type: custom:mushroom-chips-card
-        alignment: center
-        chips:
-          - type: entity
-            entity: sensor.ew50e_stato_sistema
-            icon: mdi:hvac
-          - type: entity
-            entity: sensor.ew50e_problemi_totali
-            icon: mdi:alert-circle-outline
-          - type: entity
-            entity: sensor.ew50e_allarmi_attivi
-            icon: mdi:bell-alert-outline
-          - type: entity
-            entity: binary_sensor.ew50e_perdita_gas_refrigerante
-            icon: mdi:molecule
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              title: "⚠️ Anomalie attive"
+              state_color: true
+              show_header_toggle: false
+            filter:
+              template: >-
+                {%- set ns = namespace(items=[]) -%}
+                {%- if is_state('binary_sensor.ew50e_anomalia_sistema', 'on') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': 'binary_sensor.ew50e_anomalia_sistema',
+                    'name': 'Sistema Centrale EW-50E',
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endif -%}
+                {%- if is_state('binary_sensor.ew50e_perdita_gas_refrigerante', 'on') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': 'binary_sensor.ew50e_perdita_gas_refrigerante',
+                    'name': 'Perdita Gas Refrigerante',
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endif -%}
+                {%- for b in states.binary_sensor
+                      | selectattr('attributes.gruppo_id', 'defined')
+                      | selectattr('state', 'eq', 'on')
+                      | sort(attribute='attributes.nome') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': b.entity_id,
+                    'name': b.attributes.nome | default(b.name),
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endfor -%}
+                {{ ns.items | tojson }}
 
-      # ---- 3. Anomalie attive (compare in cima SOLO se presenti) ------------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "⚠️ Anomalie attive"
-          state_color: true
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- if is_state('binary_sensor.ew50e_anomalia_sistema', 'on') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': 'binary_sensor.ew50e_anomalia_sistema',
-                'name': 'Sistema Centrale EW-50E',
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endif -%}
-            {%- if is_state('binary_sensor.ew50e_perdita_gas_refrigerante', 'on') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': 'binary_sensor.ew50e_perdita_gas_refrigerante',
-                'name': 'Perdita Gas Refrigerante',
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endif -%}
-            {%- for b in states.binary_sensor
-                  | selectattr('attributes.gruppo_id', 'defined')
-                  | selectattr('state', 'eq', 'on')
-                  | sort(attribute='attributes.nome') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': b.entity_id,
-                'name': b.attributes.nome | default(b.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+      # =======================================================================
+      # COLONNA 1: FARMACIA (8 zone)
+      # =======================================================================
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Farmacia
+            heading_style: title
+            icon: mdi:medical-bag
 
-      # ---- 4. Macro-Zona: FARMACIA ------------------------------------------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "💊 Farmacia"
-          state_color: true
-          show_header_toggle: false
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- for s in states.sensor
-                  | selectattr('attributes.macro_zona', 'defined')
-                  | selectattr('attributes.macro_zona', 'eq', 'Farmacia')
-                  | sort(attribute='attributes.nome_breve') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': s.entity_id,
-                'name': s.attributes.nome_breve | default(s.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              state_color: true
+              show_header_toggle: false
+            filter:
+              template: >-
+                {%- set ns = namespace(items=[]) -%}
+                {%- for s in states.sensor
+                      | selectattr('attributes.macro_zona', 'defined')
+                      | selectattr('attributes.macro_zona', 'eq', 'Farmacia')
+                      | sort(attribute='attributes.nome_breve') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': s.entity_id,
+                    'name': s.attributes.nome_breve | default(s.name),
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endfor -%}
+                {{ ns.items | tojson }}
 
-      # ---- 5. Macro-Zona: STUDI ---------------------------------------------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "🩺 Studi"
-          state_color: true
-          show_header_toggle: false
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- for s in states.sensor
-                  | selectattr('attributes.macro_zona', 'defined')
-                  | selectattr('attributes.macro_zona', 'eq', 'Studi')
-                  | sort(attribute='attributes.nome_breve') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': s.entity_id,
-                'name': s.attributes.nome_breve | default(s.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+      # =======================================================================
+      # COLONNA 2: STUDI MEDICI (5 zone)
+      # =======================================================================
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Studi
+            heading_style: title
+            icon: mdi:stethoscope
 
-      # ---- 6. Macro-Zona: CASA ----------------------------------------------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "🏠 Casa"
-          state_color: true
-          show_header_toggle: false
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- for s in states.sensor
-                  | selectattr('attributes.macro_zona', 'defined')
-                  | selectattr('attributes.macro_zona', 'eq', 'Casa')
-                  | sort(attribute='attributes.nome_breve') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': s.entity_id,
-                'name': s.attributes.nome_breve | default(s.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              state_color: true
+              show_header_toggle: false
+            filter:
+              template: >-
+                {%- set ns = namespace(items=[]) -%}
+                {%- for s in states.sensor
+                      | selectattr('attributes.macro_zona', 'defined')
+                      | selectattr('attributes.macro_zona', 'eq', 'Studi')
+                      | sort(attribute='attributes.nome_breve') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': s.entity_id,
+                    'name': s.attributes.nome_breve | default(s.name),
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endfor -%}
+                {{ ns.items | tojson }}
 
-      # ---- 7. Macro-Zona: BILOCALE ------------------------------------------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "🛋️ Bilocale"
-          state_color: true
-          show_header_toggle: false
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- for s in states.sensor
-                  | selectattr('attributes.macro_zona', 'defined')
-                  | selectattr('attributes.macro_zona', 'eq', 'Bilocale')
-                  | sort(attribute='attributes.nome_breve') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': s.entity_id,
-                'name': s.attributes.nome_breve | default(s.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+      # =======================================================================
+      # COLONNA 3: CASA (3 zone)
+      # =======================================================================
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Casa
+            heading_style: title
+            icon: mdi:home-outline
 
-      # ---- 8. Eventuali altre zone future (compare solo se presenti) --------
-      - type: custom:auto-entities
-        show_empty: false
-        card:
-          type: entities
-          title: "📍 Altre zone"
-          state_color: true
-          show_header_toggle: false
-        filter:
-          template: >-
-            {%- set ns = namespace(items=[]) -%}
-            {%- for s in states.sensor
-                  | selectattr('attributes.macro_zona', 'defined')
-                  | rejectattr('attributes.macro_zona', 'in', ['Farmacia', 'Studi', 'Casa', 'Bilocale'])
-                  | sort(attribute='attributes.nome') -%}
-              {%- set ns.items = ns.items + [{
-                'entity': s.entity_id,
-                'name': s.attributes.nome | default(s.name),
-                'secondary_info': 'last-changed'
-              }] -%}
-            {%- endfor -%}
-            {{ ns.items | tojson }}
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              state_color: true
+              show_header_toggle: false
+            filter:
+              template: >-
+                {%- set ns = namespace(items=[]) -%}
+                {%- for s in states.sensor
+                      | selectattr('attributes.macro_zona', 'defined')
+                      | selectattr('attributes.macro_zona', 'eq', 'Casa')
+                      | sort(attribute='attributes.nome_breve') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': s.entity_id,
+                    'name': s.attributes.nome_breve | default(s.name),
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endfor -%}
+                {{ ns.items | tojson }}
 
-      # ---- 9. Diagnostica sistema -------------------------------------------
-      - type: entities
-        title: Diagnostica sistema
-        show_header_toggle: false
-        entities:
-          - entity: sensor.ew50e_stato_sistema
-            name: Stato sistema
-          - entity: binary_sensor.ew50e_anomalia_sistema
-            name: Anomalia sistema
-          - entity: binary_sensor.ew50e_perdita_gas_refrigerante
-            name: Perdita gas refrigerante
-          - entity: sensor.ew50e_allarmi_attivi
-            name: Allarmi attivi
-          - entity: sensor.ew50e_problemi_totali
-            name: Problemi totali (aggregato)
+      # =======================================================================
+      # COLONNA 4: BILOCALE + DIAGNOSTICA SISTEMA
+      # =======================================================================
+      - type: grid
+        column_span: 1
+        cards:
+          - type: heading
+            heading: Bilocale
+            heading_style: title
+            icon: mdi:sofa-outline
+
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              state_color: true
+              show_header_toggle: false
+            filter:
+              template: >-
+                {%- set ns = namespace(items=[]) -%}
+                {%- for s in states.sensor
+                      | selectattr('attributes.macro_zona', 'defined')
+                      | selectattr('attributes.macro_zona', 'eq', 'Bilocale')
+                      | sort(attribute='attributes.nome_breve') -%}
+                  {%- set ns.items = ns.items + [{
+                    'entity': s.entity_id,
+                    'name': s.attributes.nome_breve | default(s.name),
+                    'secondary_info': 'last-changed'
+                  }] -%}
+                {%- endfor -%}
+                {{ ns.items | tojson }}
+
+          - type: heading
+            heading: Diagnostica Sistema
+            heading_style: title
+            icon: mdi:chip
+
+          - type: entities
+            state_color: true
+            show_header_toggle: false
+            entities:
+              - entity: sensor.ew50e_stato_sistema
+                name: Stato sistema
+              - entity: binary_sensor.ew50e_anomalia_sistema
+                name: Anomalia sistema
+              - entity: binary_sensor.ew50e_perdita_gas_refrigerante
+                name: Perdita gas refrigerante
+              - entity: sensor.ew50e_allarmi_attivi
+                name: Allarmi M-NET attivi
+              - entity: sensor.ew50e_problemi_totali
+                name: Problemi totali
