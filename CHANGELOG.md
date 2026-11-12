@@ -3,6 +3,13 @@
 Tutte le modifiche rilevanti a questo progetto sono documentate in questo file.
 Il formato è basato su [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il progetto adotta il [Semantic Versioning](https://semver.org/lang/it/).
 
+## [2.1.2] - 2026-11-12
+
+### Fixed
+- **Deprecazione `via_device` in `DeviceInfo` (`__init__.py`, `sensor.py`, `binary_sensor.py`):** sostituito `via_device=(DOMAIN, host)` con `via_device_id=coordinator.hub_device_id` anche dentro `zone_device_info()`, eliminando i due warning residui in `sensor.py` (`async_add_entities`) e `binary_sensor.py` (`async_add_entities`).
+
+---
+
 ## [2.1.1] - 2026-11-12
 
 ### Changed

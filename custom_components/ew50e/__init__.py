@@ -122,17 +122,24 @@ def hub_device_info(host: str) -> DeviceInfo:
     )
 
 
-def zone_device_info(host: str, group_id: str, group_name: str) -> DeviceInfo:
+def zone_device_info(
+    host: str,
+    group_id: str,
+    group_name: str,
+    hub_device_id: str | None = None,
+) -> DeviceInfo:
     """DeviceInfo dedicato per singola zona M-NET (contiene Stato e Anomalia della zona)."""
     macro_zona, _ = parse_zone_metadata(group_name)
-    return DeviceInfo(
+    info = DeviceInfo(
         identifiers={(DOMAIN, f"{host}_group_{group_id}")},
-        via_device=(DOMAIN, host),
         name=group_name,
         manufacturer="Mitsubishi Electric",
         model=f"Zona M-NET #{group_id} ({macro_zona})",
         configuration_url=f"https://{host}/control/",
     )
+    if hub_device_id:
+        info["via_device_id"] = hub_device_id  # type: ignore[typeddict-unknown-key]
+    return info
 
 
 def _build_canonical_entity_ids(group_names: dict[str, str]) -> dict[str, str]:
@@ -168,6 +175,7 @@ async def _async_prepare_devices_and_migrate(
     )
     if hub_dev.name == "EW-50E Mitsubishi" and hub_dev.name_by_user is None:
         dev_reg.async_update_device(hub_dev.id, name="EW50E")
+    coordinator.hub_device_id = hub_dev.id
 
     zone_dev_ids: dict[str, str] = {}
     for gid, gname in coordinator.group_names.items():
@@ -724,6 +732,7 @@ class EW50ECoordinator(DataUpdateCoordinator[dict[str, Any]]):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL)
         self.client = client
         self.group_names: dict[str, str] = {}
+        self.hub_device_id: str | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:

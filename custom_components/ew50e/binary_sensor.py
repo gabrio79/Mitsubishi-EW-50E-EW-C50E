@@ -113,7 +113,7 @@ class EW50EGroupAlarmBinarySensor(_Base):
         self._group_name = group_name
         self._macro_zona, self._nome_breve = parse_zone_metadata(group_name)
         self._attr_device_info = zone_device_info(
-            entry.data["host"], group_id, group_name
+            entry.data["host"], group_id, group_name, coordinator.hub_device_id
         )
         self._attr_unique_id = f"ew50e_group_{group_id}_alarm"
         self._attr_name = "Anomalia"

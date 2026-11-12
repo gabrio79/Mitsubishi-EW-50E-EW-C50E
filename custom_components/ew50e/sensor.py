@@ -139,7 +139,7 @@ class _GroupBase(_Base):
         self._group_name = group_name
         self._macro_zona, self._nome_breve = parse_zone_metadata(group_name)
         self._attr_device_info = zone_device_info(
-            entry.data["host"], group_id, group_name
+            entry.data["host"], group_id, group_name, coordinator.hub_device_id
         )
 
     def _group_data(self) -> dict[str, Any]:
